@@ -14,7 +14,6 @@ if True:
 
 poseffects = True
 
-
 if True:
 	n_cods=64
 	# n_cods=5
@@ -34,7 +33,7 @@ if True:
 	stopeffect = np.concatenate([np.array([0]*(512-10)),1.5**(-np.linspace(0,10,10))])
 
 	genetpmvect = 2*(10**np.linspace(1,4,n_genes))/n_len
-	# genetpmvect = genetpmvect/genetpmvect
+	genetpmvect = genetpmvect/genetpmvect
 	genetpmvect = torch.FloatTensor(genetpmvect)
 
 	#n,n_genes codsig by (n_genes,n_genes) tpmmatrix gets us a n,n_genes signal mat
@@ -87,9 +86,24 @@ if True:
 	train_offsets = TPMoffsets[traininds]
 	val_offsets = TPMoffsets[valinds]
 	test_offsets = TPMoffsets[testinds]
-	
-# fakesignal.sum(axis=1).max()
-# fakesignal.sum(axis=1).min()
+
+
+    #we add these to the output of our model, to normalize for TPM  
+(fakesignal * fakecodonseqs1h[:,1,:]).shape
+(TPMoffsets.unsqueeze(1)).exp().shape
+
+
+#calculate average signal per codon - just proving this works for when i do it with data
+pcodstrengths = [ ((fakesignal)/(TPMoffsets.exp().unsqueeze(1)))[fakecodonseqs1h[:,i,:]==1].mean().item() for i in range(0,n_cods)]
+pcodstrengths = torch.FloatTensor(pcodstrengths)
+plx.clear_plot()
+plx.scatter(
+        codstrengths.cpu().numpy().flatten(),
+        pcodstrengths.cpu().numpy().flatten(),
+        rows = 17, cols = 70)
+plx.show()	
+fakesignal.sum(axis=1).max()
+fakesignal.sum(axis=1).min()
 
 # traininds.shape
 # testinds.shape

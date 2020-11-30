@@ -8,6 +8,7 @@ if True:
     import random
     import pandas as pd
     import numpy as np
+    import glob
 
 # var_exists = 'test_target' in locals() or 'test_target' in globals()
 
@@ -30,8 +31,6 @@ genetic_code = {'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C', 'TTC': 'F', 'TCC
                 'GTA': 'V', 'GCA': 'A', 'GAA': 'E', 'GGA': 'G', 'GTG': 'V', 'GCG': 'A', 'GAG': 'E', 'GGG': 'G'}
 
 AMINO_ACIDS = ['A', 'R', 'D', 'N', 'C', 'E', 'Q', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V', '*']
-
-
 if not 'read_tbl' in globals():
  print('reading reads file')
  read_tbl = pd.read_csv(
@@ -39,6 +38,21 @@ if not 'read_tbl' in globals():
     usecols = ['codon_idx','gene','ribosome_count','TPM','codon']
     )
 
+# fa=../Liuetal_pipeline/ext_data/gencode.v24lift37.pc_translations.fa ;
+# localfa=$(basename ${fa%.fa}.trid.fa )
+# cat $fa | perl -lanpe 's/>.*\|(ENST\w+\.\d+).*/>\1/' > $localfa
+head $localfa
+python Applications/esm/extract.py esm1_t34_670M_UR50S $localfa Gencodev24lift37_tokens  --include per_tok && echo 'finished!'
+#python Applications/esm/extract.py esm1_t34_670M_UR50S ${fa%.fa}.trid.fa   Gencodev24lift37_tokens   --repr_layers 31 --include per_tok && echo 'finished!'
+
+use_esm_tokens=True
+
+esmfiles = glob.glob('genc18_tokens_2/*')
+#parse transcript names out of the esmfile names
+esmtrs =pd.Series(esmfiles).str.extract('ENST\\d+')
+esmfiles = pd.Series(esmfiles,index=esmtrs)
+    
+    
 codonnum = pd.Series(range(0, len(CODON_TYPES)), index=CODON_TYPES)+1
 n_cods = len(CODON_TYPES)+1 #There needs to be an uknown 
 n_len = 512
@@ -52,9 +66,11 @@ if True:
     reads2use = (read_tbl.
                  query('codon_idx >= -10').
                  query('codon_idx < (512 -10 )').
-                 query('ribosome_count!=0')
+                 query('ribosome_count!=0').
+                 query('TPM>8')
                  )
 
+    print('using '+str(len(reads2use.gene.unique()))+' genes')
   
 
 
@@ -62,7 +78,13 @@ if True:
 
     ugenes = reads2use.gene.unique()
     ugenes.sort()
+
+    if use_esm_tokens:
+        ugenetrs = pd.Series(ugenes).str.extract('(ENST\\d+)')
+        ugenetrs.isin(esmfiles.index)
+
     n_genes = ugenes.shape[0]
+
     gene2num = pd.Series(range(0, len(ugenes)), index=ugenes)
     
     assert reads2use.codon.isin(codonnum.index).all()
@@ -102,6 +124,7 @@ if True:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+    bptt=100
     def cget_batch(source, targetsource, offsetsource, i, bptt=100,device=device):
         seq_len = min(bptt, len(source) - 1 - i)
         data = source[i:i+seq_len]
@@ -110,9 +133,9 @@ if True:
         return data.to(device), target.to(device), offset.to(device)
 
     assert [x.shape for x in cget_batch(codons, ribosignal, TPMs, 1)] ==  [
-         torch.Size([100, n_cods, 512 ]),
-         torch.Size([100, 1, 512]),
-         torch.Size([100, 1, 1])]
+         torch.Size([bptt, n_cods, n_len ]),
+         torch.Size([bptt, 1, n_len]),
+         torch.Size([bptt, 1, 1])]
 
 
     print('splitting...')
@@ -126,3 +149,12 @@ if True:
     test_data, test_target, test_offsets = codons[testinds],ribosignal[testinds], TPMs[testinds]
 
     #we add these to the output of our model, to normalize for TPM  
+(ribosignal * codons[:,1,:])
+(TPMs.unsqueeze(1)).exp()
+
+#calculate average signal per codon
+codstrengths = [ ((ribosignal)/(TPMs.exp().unsqueeze(1)))[codons[:,i,:]==1].mean().item() for i in range(0,n_cods)]
+codstrengths = torch.FloatTensor(codstrengths[:]).log()
+
+
+
