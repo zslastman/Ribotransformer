@@ -2,13 +2,26 @@
 ########This script produces metacodon plots
 ################################################################################
 library(rlang)
-library(tidyverse)
 library(GenomicRanges)
 library(magrittr)
 library(ggplot2)
 library(riboWaltz)
 library(data.table)
 library(Rsamtools)
+library(tidyverse)
+slice <- dplyr::slice 
+is_offchr<-function(gr,si){
+  if(is(gr,'GenomicRangesList')){
+   (end(gr) > split(seqlengths(gr)[as.character(unlist(seqnames(gr)))],gr@partitioning) ) %in% TRUE
+  }else{
+    seqinfo(gr)<-si
+    end(gr) > seqlengths(gr)[as.character(seqnames(gr))]
+  }
+}
+is_out_of_bounds <- function(gr,si = seqinfo(gr)){
+  start(gr)<1 | is_offchr(gr,si) 
+}
+
 
 #TODOS
 #remove the requirement for expression
@@ -17,13 +30,10 @@ args <- R.utils::commandArgs(trailingOnly = TRUE, asValues = TRUE,
     defaults = list(
         bamparentfolder = "../Liuetal_pipeline/pipeline/star/ORFext/data/", #folder with subfolders containing bam files
         fafile = '/fast/work/groups/ag_ohler/dharnet_m/Splicing_Lausanne/ext_data/annotation/gencode.v24lift37.annotation.orfext.fa',
-        # riboexprfolder = '../Liuetal_pipeline/pipeline/ribotrans_process/',
         FLANKCODS = 14, 
         minreadlen=25,
         maxreadlen=35,
-        offsetfile='../Liuetal_pipeline/pipeline/riboseqc/data/ribo_0h/_P_sites_calcs',
-        outputfolder='../Liuetal_pipeline/pipeline/metacodon_offset_analysis',
-        foo = 'bar'
+        outputfolder='../Liuetal_pipeline/pipeline/metacodon_offset_analysis'
 
 ))
 # Turn arguments into R variables
@@ -47,8 +57,8 @@ stopifnot(!anyDuplicated(names(bfolders)))
 get_highcountcovtrs <- function(bfolders){
     bamfiles <- bfolders %>% map_chr(~Sys.glob(paste0(.,'*.bam')))
     names(bamfiles) <- names(bfolders)
-    tr_read_stats = bamfiles%>%map_df(.id='sample',Rsamtools::idxstatsBam)
-    tr_read_stats%>%group_by(sample)%>%mutate(mapped=mapped/sum(mapped))
+    tr_read_stats = bamfiles %>%map_df(.id='sample',Rsamtools::idxstatsBam)
+    tr_read_stats %>%group_by(sample) %>%mutate(mapped=mapped/sum(mapped))
 
     highcountcovtrs <- tr_read_stats %>%
         group_by(sample) %>%
@@ -56,7 +66,7 @@ get_highcountcovtrs <- function(bfolders){
         group_by(seqnames) %>%
         summarise(m=mean(mapped)) %>%
         arrange(desc(m)) %>%
-        dplyr::slice(1:5000)%>%
+        dplyr::slice(1:5000) %>%
         pluck('seqnames')
     highcountcovtrs %<>% str_extract("^[^|]+")
 }
@@ -72,6 +82,8 @@ if (!file.exists(str_interp("${outputfolder}/highcountcovtrs.rds"))) {
 highcountcovtrs <- get_highcountcovtrs(bfolders)
 
 seqs <- readDNAStringSet(fafile)
+
+
 seqheaders <- names(seqs)
 names(seqs) <- str_extract(names(seqs), "^[^|]+")
 headers_have_cds <- str_detect(seqheaders, "CDS:(\\d+)\\-(\\d+)")
@@ -87,7 +99,7 @@ names(cdslens) <- names(seqlens)
 names(seqlens) %<>% str_extract("^[^|]+")
 
 annotation_dt <- data.table(transcript = names(seqlens), l_utr5 = 60,
-    l_cds = cdslens, l_utr3 = 57)%>%
+    l_cds = cdslens, l_utr3 = 57) %>%
     mutate(l_tr = l_utr5 + l_cds + l_utr3)
 hctr_lens <- annotation_dt$l_tr[match(highcountcovtrs, annotation_dt$transcript)]
 names(hctr_lens) <- highcountcovtrs
@@ -98,6 +110,9 @@ trspacecds <- annotation_dt %>%
         .$l_utr5 + .$l_cds
     ))} %>% setNames(., seqnames(.))
 
+atgtable = seqs[trspacecds %>%resize(3) %>%head(100)] %>%table
+cdsmostly_atg_start = atgtable['ATG'] > 90
+stopifnot(cdsmostly_atg_start)
 # testtrs = annotation_dt
 
 ################################################################################
@@ -105,16 +120,25 @@ trspacecds <- annotation_dt %>%
 ################################################################################
     
 get_fpcovlist <- function(bfolder, hctr_lens, minreadlen, maxreadlen) {
-        reads_list <- bamtolist(
+        reads_list <- riboWaltz::bamtolist(
                 bamfolder = bfolder,
                 annotation = annotation_dt)
         stopifnot(length(reads_list) == 1)
-        reads_list = reads_list[[1]]
-        GRanges(reads_list$transcript, IRanges(reads_list$end5, w = 1),
-            readlen = reads_list$length) %>%
-            subset(seqnames %in% highcountcovtrs) %>%
-            subset(between(readlen, minreadlen, maxreadlen)) %>%
-            { stopifnot(all(highcountcovtrs %in% seqnames(.) )) ;.} %>%
+        reads_list <- reads_list[[1]]
+        reads_list %<>% filter(transcript %in% names(hctr_lens))
+        reads_list %<>% filter(between(length, minreadlen, maxreadlen))
+        most_highcov_trs_in_bam <- mean(
+            names(hctr_lens) %in% reads_list$transcript 
+        )>.9 
+        #
+        stopifnot(most_highcov_trs_in_bam)
+        #
+        gr <- GRanges(
+                reads_list$transcript,
+                IRanges(reads_list$end5, w = 1),
+                readlen = reads_list$length
+            )
+        gr %>%
             { seqlevels(.) <- names(hctr_lens) ;.} %>%
             { seqlengths(.) <- hctr_lens ;.} %>%
             {split(., .$readlen)} %>%
@@ -122,23 +146,27 @@ get_fpcovlist <- function(bfolder, hctr_lens, minreadlen, maxreadlen) {
 }
 get_fpcovlist <- purrr::partial(get_fpcovlist,hctr_lens=hctr_lens,
         minreadlen=minreadlen,
-    maxreadlen=minreadlen)
+    maxreadlen=maxreadlen)
 #get allcodlist granges object descxribing codon positions in the transcripts
 message("reading coverage from bam files")
 if (!file.exists(str_interp("${outputfolder}/fpcovlist.rds"))) {
     #read the read data
     fpcovlist  <-  lapply(bfolders, get_fpcovlist)
     #
-    fpcovlist%<>%setNames(names(bfolder))
-    sampleorder = fpcovlist%>%names%>%str_extract("\\d+")%>%as.numeric
+    fpcovlist%<>%setNames(names(bfolders))
+    sampleorder = fpcovlist %>%names %>%str_extract("\\d+") %>%as.numeric
     stopifnot(!any(is.na(sampleorder)))
     stopifnot(!any(duplicated(sampleorder)))
     fpcovlist = fpcovlist[order(sampleorder)]
     saveRDS(fpcovlist, str_interp("${outputfolder}/fpcovlist.rds"))
 }else{
     fpcovlist <- readRDS(str_interp("${outputfolder}/fpcovlist.rds"))
-    stopifnot(allcodlist@seqinfo@seqnames %>% setequal(highcountcovtrs))
+    stopifnot(fpcovlist[[1]][[1]] %>%names %>% setequal(highcountcovtrs))
 }
+# # 
+fpcovlist%>%map_dbl(~sum(sum(.)))
+# topreadlengths <- get_topreadlengths(fpcovlist)
+# fpcovlist%<>%map(topreadlengths)
 
 ################################################################################
 ########Verify offsets with metacodon plots
@@ -214,59 +242,58 @@ if (!file.exists(str_interp("${outputfolder}/fprustprofilelist.rds"))) {
 }
 
 process_profiles <- function(fprustprofilelist){
-    rustprofiledat = fprustprofilelist%>%
-        map_depth(3,.%>%enframe("position","count"))%>%
-        map_df(.id="sample",.%>%
-            map_df(.id="length",.%>%
+    rustprofiledat = fprustprofilelist %>%
+        map_depth(3,. %>%enframe("position","count")) %>%
+        map_df(.id="sample",. %>%
+            map_df(.id="length",. %>%
                 bind_rows(.id="codon")
             )
         )
     rustprofiledat%<>%mutate(position = position - 1 - (FLANKCODS*3))
-    rustprofiledat%<>%group_by(sample,length,codon)%>%
+    rustprofiledat%<>%group_by(sample,length,codon) %>%
         mutate(count= count / mean(na.rm=T,count))
     rustprofiledat%<>%filter(!codon %in% c("TAG","TAA","TGA"))
     rustprofiledat$length%<>%as.numeric
     rustprofiledat%<>%
-        ungroup%>%
+        ungroup %>%
         mutate(sample = as_factor(sample))
     rustprofiledat
 }
 rustprofiledat <- process_profiles(fprustprofilelist)
 
-#BUG
-# rustprofiledat%>%filter(length==34,sample!="ribo_0h")
 
 ################################################################################
 ########testing the pca based a-site calls
 ################################################################################
 
+
 get_metacodon_var_offsets<-function(rustprofiledat,outputfolder){
-    profdat = rustprofiledat%>%select(position,length,sample,count)
-    profdat$length= profdat$length%>%as.numeric
+    profdat <- rustprofiledat %>%select(position,length,sample,count)
+    profdat$length= profdat$length %>%as.numeric
     profdat$phase = (-profdat$position)%%3
-    vardf = profdat%>%
-        ungroup%>%
-        group_by(sample,length,position,phase)%>%
+    vardf = profdat %>%
+        ungroup %>%
+        group_by(sample,length,position,phase) %>%
         summarise(sdsig=sd(count,na.rm=T)/median(count,na.rm=T))
     vardf <- 
-        vardf%>%
-        group_by(sample,length,phase)%>%
-        arrange(position)%>%
+        vardf %>%
+        group_by(sample,length,phase) %>%
+        arrange(position) %>%
         mutate(sdsigpair = sdsig+lag(sdsig))
-    vardf <- vardf%>%
-        mutate(ismode=(sdsig>lag(sdsig)) & ((sdsig)<lead(sdsig)))%>%
+    vardf <- vardf %>%
+        mutate(ismode=(sdsig>lag(sdsig)) & ((sdsig)<lead(sdsig))) %>%
         filter(position> -length+6,position <  -6)
-    bestmode <- vardf%>%group_by(sample,phase)%>%slice(which.max(sdsigpair))
-    outvardf <- vardf%>%
-        group_by(sample,length,phase)%>%
-        slice(which.max(sdsigpair))%>%
-        mutate(offset=-position)%>%
+    bestmode <- vardf %>%group_by(sample,phase) %>%slice(which.max(sdsigpair))
+    outvardf <- vardf %>%
+        group_by(sample,length,phase) %>%
+        slice(which.max(sdsigpair)) %>%
+        mutate(offset=-position) %>%
         select(length,phase,offset)
     #output text file
     varoffsetfile <- paste0(outputfolder,"/variance_offsets.txt")
-    outvardf%>%write_tsv(varoffsetfile)
-    varoffsetfile%>%
-        normalizePath(mustWork=TRUE)%>%
+    outvardf %>%write_tsv(varoffsetfile)
+    varoffsetfile %>%
+        normalizePath(mustWork=TRUE) %>%
         message
     outvardf
 }
@@ -302,7 +329,7 @@ create_fp_var_plot <- function(rustprofiledat, varoffsets, outputfolder,
             ggtitle("variance of 5' read occurance vs position")
         } %>% print
     dev.off()
-    normalizePath(plotfile)%>%message
+    normalizePath(plotfile) %>%message
     normalizePath(plotfile)
 }
 for(sample_i in unique(rustprofiledat$sample)) {
@@ -367,7 +394,7 @@ profvarpca %>%
     facet_grid(length~sample) + 
     geom_vline(data=varoffsets,aes(xintercept = -offset),
         color=I("blue"),linetype=2)+
-    geom_vline(data=varoffsets%>%mutate(offset = offset+3),
+    geom_vline(data=varoffsets %>%mutate(offset = offset+3),
         aes(xintercept= -offset),
         color=I("red"),linetype=2)
 );dev.off()

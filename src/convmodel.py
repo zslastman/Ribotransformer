@@ -142,19 +142,21 @@ for epoch in range(1, epochs + 1):
     scheduler.step()
 
 
-plx.clear_plot()
-plx.scatter(
-        codstrengths.cpu().numpy().flatten(),
-        cmodel(torch.diag(torch.FloatTensor([1]*65)).reshape([1,65,65])).detach().numpy().flatten(), 
-        rows = 17, cols = 70)
-plx.show()
+
 
 plx.clear_plot()
 plx.scatter(
-        codstrengths.cpu().numpy().flatten()[1:],
-        cmodel(torch.diag(torch.FloatTensor([1]*65)).reshape([1,65,65])).detach().numpy().flatten()[1:], 
+        codstrengths.cpu().numpy().flatten(),
+        cmodel(torch.diag(torch.FloatTensor([1]*n_cods)).reshape([1,n_cods,n_cods]).to(device)).cpu().detach().numpy().flatten(), 
         rows = 17, cols = 70)
 plx.show()
+
+# plx.clear_plot()
+# plx.scatter(
+#         codstrengths.cpu().numpy().flatten()[1:],
+#         cmodel(torch.diag(torch.FloatTensor([1]*65)).reshape([1,65,65])).detach().numpy().flatten()[1:], 
+#         rows = 17, cols = 70)
+# plx.show()
 
 
 test_loss = evaluate(best_model, test_data, test_target, test_offsets)

@@ -158,8 +158,6 @@ def makePredTraining(bamdf):
                          'nt_n-1', 'nt_n', '5_offset', '3_offset', 'asite']]
     return training
 
-
-
 def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
     coddfs = []
     # def tcode():
@@ -185,15 +183,18 @@ def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
     return coddf
 
 
-
+""
 if __name__ == '__main__':
+    sys.argv=['']
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", help="Input bam file",default = "star/ORFext/data/ribo_0h/ribo_0h.sort.bam")
+    parser.add_argument("-i", help="Input bam file",default = "/fast/work/groups/ag_ohler/dharnet_m//Liuetal_pipeline/pipeline/star/ORFext/data/ribo_0h/ribo_0h.sort.bam")
     parser.add_argument("-f", help="Fasta file", default="/fast/work/groups/ag_ohler/dharnet_m/Splicing_Lausanne/ext_data/annotation/gencode.v24lift37.annotation.orfext.fa")
     parser.add_argument("-v" , default=False ,help="verbose EM ?", dest='verbose', action='store_true')
+    parser.add_argument("-e" , default=False ,help="expression only ?", dest='expr_only', action='store_true')
     parser.add_argument("-o", help="ribotrans_test", default="ribotranstest")
     args = parser.parse_args()
     
+
     bam = args.i
     cdsfasta = args.f
 
@@ -201,54 +202,84 @@ if __name__ == '__main__':
         cdsfasta)
     trlength = pd.Series(dict([(s, len(exonseq[s])) for s in exonseq]))
 
+    # assert min(transcript_cdsstart.values()) > 20, "This script needs CDS to be extended, so that e.g. start reads still map to trs"
+
     bamdf = make_bamDF(bam)
 
-    # #count only reads overlapping the cds
-    # bamdf = (bamdf.
-    #     merge(pd.Series(transcript_cdsstart,name='cdsstart'),left_on='tr_id',right_index=True).
-    #     query('end > cdsstart').
-    #     drop(['cdsstart'],axis=1).
-    #     merge(pd.Series(transcript_cdsend,name='cdsend'),left_on='tr_id',right_index=True).
-    #     query('start < cdsend').
-    #     drop(['cdsend'],axis=1)
-    # )
-
+    #count only reads overlapping the cds
+    bamdf = (bamdf.
+        merge(pd.Series(transcript_cdsstart,name='cdsstart'),left_on='tr_id',right_index=True).
+        query('end > cdsstart').
+        drop(['cdsstart'],axis=1).
+        merge(pd.Series(transcript_cdsend,name='cdsend'),left_on='tr_id',right_index=True).
+        query('start < cdsend').
+        drop(['cdsend'],axis=1)
+    )
 
     print('bam loaded')
 
+
+###############################################################################
+# ## now calculate expression levels
+    
     sampreads, transcript_TPMs, TPM_diff, transcript_readcount = ribo_EM(
         bamdf[['read_name', 'tr_id']],
         transcript_CDS_len,
-        numloops=100,
+        numloops=1,
         verbose=args.verbose
     )
-
-    sampreads = sampreads[['read_name', 'tr_id']]
-    sampreadsfull = sampreads.merge(bamdf, how='inner')
-
-    sampreadsfull = add_seqinfo(sampreadsfull, transcript_cdsstart, exonseq, trlength)
-
-    gtpms = pd.concat([pd.Series(transript_gene,name='gene'),pd.Series(dict(transcript_TPMs),name='TPM')],axis=1)
-    trstouse = gtpms.query('TPM>10').sort_values('TPM',ascending=False).groupby('gene').head(1)['TPM'].index.to_series()
-
-    coddf = get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength)
-    coddf = coddf.merge(pd.Series(transcript_TPMs,name='TPM'),left_on='chrom',right_index=True).assign(pair_prob=0)
-
-    training = makePredTraining(sampreadsfull[sampreadsfull.tr_id.isin(trstouse)])
-
-    model = PredictAsite(training, sampreadsfull, 'rf', False,cdsIdxDf = coddf)
-    print('fit A sites')
-    model.rfFit()
-    model.rfPredict()
     
-    print("[execute]\tlocalize the a-site codon and create coverage df", file=sys.stderr)
+    counts = sampreads.groupby('tr_id').size()
+    counts.name='read_count'
+    
+    tr_expr = pd.DataFrame(pd.Series(transcript_TPMs).reset_index()).rename(columns={'index':'tr_id',0:'RPF_dens'}).merge(
+        pd.DataFrame(pd.Series(transcript_CDS_len).reset_index()).rename(columns={'index':'tr_id',0:'cds_len'})).merge(
+        pd.DataFrame(pd.Series(counts).reset_index()).rename(columns={'index':'tr_id',0:'read_count'})
+    )
+    
+    exprfile = args.o.replace('.csv','')+'.tr_expr.tsv'
+    tr_expr.to_csv(exprfile,index=False,sep='\t')
+    print(exprfile)
 
-    model.cds['gene_strand'] = '+'
-    model.cds['strand'] = '+'
-    model.cds = model.cds.rename(columns={'tr_id': 'chrom'})
-    dataFrame = model.recoverAsite()
+    assert False
+    if not args.expr_only:
+        sampreads = sampreads[['read_name', 'tr_id']]
+        # sampreadsfull = bamdf
+        sampreadsfull = sampreads.merge(bamdf, how='inner')
 
-    dataFrame.to_csv(args.o,index=False)
+        sampreadsfull = add_seqinfo(sampreadsfull, transcript_cdsstart, exonseq, trlength)
+
+        gtpms = pd.concat([pd.Series(transript_gene,name='gene'),pd.Series(dict(transcript_TPMs),name='TPM')],axis=1)
+        TPMTHRESH = 0
+        trstouse = gtpms.query('TPM>@TPMTHRESH').sort_values('TPM',ascending=False).groupby('gene').head(1)['TPM'].index.to_series()
+
+        coddf = get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength)
+
+        coddf = coddf.merge(pd.Series(transcript_TPMs,name='TPM'),left_on='chrom',right_index=True).assign(pair_prob=0)
+        
+        startposmeta = sampreadsfull.query('cdspos>-32 & cdspos< 32').groupby('cdspos').size()
+
+        np.argmax(startposmeta)
+
+        training = makePredTraining(sampreadsfull[sampreadsfull.tr_id.isin(trstouse)])
+
+        model = PredictAsite(training, sampreadsfull, 'rf', False,cdsIdxDf = coddf)
+        print('fit A sites')
+        model.rfFit()
+        model.rfPredict()
+        
+        print("[execute]\tlocalize the a-site codon and create coverage df", file=sys.stderr)
+
+        model.cds['gene_strand'] = '+'
+        model.cds['strand'] = '+'
+        model.cds = model.cds.rename(columns={'tr_id': 'chrom'})
+        dataFrame = model.recoverAsite()
+
+        dataFrame.to_csv(args.o,index=False)
+
+
+
+
 
 
 # #looks like a lot of reads are extra-ORF, but this isn't due to frame shifting (chceck)
@@ -284,9 +315,7 @@ if __name__ == '__main__':
 # transcript_cdsstart['foo']
 # exonseq[tr][transcript_cdsend['foo']+1]
 
-
-
-# ################################################################################
+###############################################################################
 # # now do asite model
 # ################################################################################
 
