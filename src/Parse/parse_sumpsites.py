@@ -201,6 +201,7 @@ class RiboTransData(data.Dataset):
 
     def __len__(self):
         return len(self.ugenes)
+
 #
 rdata = RiboTransData(reads2use)
 
