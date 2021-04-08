@@ -4,7 +4,6 @@ import textwrap
 import multiprocessing
 import numpy as np
 import pandas as pd
-import itertools as it
 import pybedtools as pbt
 from textwrap import wrap
 from scipy import sparse
@@ -102,7 +101,9 @@ def make_bamDF(bam, mapq=-1, minRL=20, maxRL=35):
     return readdf
 
 
-def add_read_seqcols(uniquereadpos,trlengths,exonseq):
+def add_seqinfo(bamdf, transcript_cdsstart, exonseq, trlengths):
+    # add sequence
+    uniquereadpos = bamdf[['tr_id', 'start', 'end']].drop_duplicates()
     bamtrlens = trlengths[uniquereadpos.tr_id].reset_index(drop=True)
     uniquereadpos = uniquereadpos.reset_index(
         drop=True)[uniquereadpos.end.add(1).reset_index(drop=True) != bamtrlens]
@@ -115,28 +116,22 @@ def add_read_seqcols(uniquereadpos,trlengths,exonseq):
     edgeseq = pd.DataFrame.from_records(edgeseq, columns=seqcols)
     uniquereadpos = pd.concat(
         [uniquereadpos.reset_index(drop=True), edgeseq], axis=1)
-    return uniquereadpos
+    # add offsets
 
-def add_read_cdscols(uniquereadpos,transcript_cdsstart,transcript_cdsend):
     cdsstarts = pd.Series(transcript_cdsstart)[
         uniquereadpos.tr_id].reset_index(drop=True)
-    uniquereadpos['cdspos'] = (uniquereadpos.start.values - cdsstarts).values
+    uniquereadpos['cdspos'] = (uniquereadpos.start - cdsstarts).values
+    # uniquereadpos.assign(cdspos =  (uniquereadpos.start - cdsstarts).values)
+    # uniquereadpos = uniquereadpos.assign(cdspos=lambda x:x.start - pd.Series(transcript_cdsstart)[x.tr_id].reset_index(drop=True))
 
-    uniquereadpos['cdsendpos'] = (uniquereadpos.start.values - \
+    uniquereadpos['cdsendpos'] = uniquereadpos.start - \
         (pd.Series(transcript_cdsend) -
-         2)[uniquereadpos.tr_id].reset_index(drop=True)).values
+         2)[uniquereadpos.tr_id].reset_index(drop=True)
 
     uniquereadpos['5_offset'] = uniquereadpos['cdspos'] % 3
     uniquereadpos['3_offset'] = (
         uniquereadpos['cdspos']+(uniquereadpos['end']-uniquereadpos['start']+1)-1) % 3
 
-    return uniquereadpos
-
-def add_seqinfo(bamdf, transcript_cdsstart, exonseq, trlengths):
-    # add sequence
-    uniquereadpos = bamdf[['tr_id', 'start', 'end']].drop_duplicates()
-    uniquereadpos = add_read_seqcols(uniquereadpos,trlengths,exonseq)
-    uniquereadpos = add_read_cdscols(uniquereadpos,transcript_cdsstart,transcript_cdsend)
     # merge in to the nonredundant read df
     bamdf = pd.merge(
         bamdf, uniquereadpos,
@@ -162,6 +157,8 @@ def makePredTraining(bamdf):
     training = training[['read_length', 'nt_-1', 'nt_0',
                          'nt_n-1', 'nt_n', '5_offset', '3_offset', 'asite']]
     return training
+
+
 
 def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
     coddfs = []
@@ -190,16 +187,14 @@ def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
 
 ""
 if __name__ == '__main__':
-    sys.argv=['']
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", help="Input bam file",default = "pipeline/weinberg_yeast_riboAligned.out.sort.bam")
-    parser.add_argument("-f", help="Fasta file", default="pipeline/yeast_transcript.ext.fa")
+    parser.add_argument("-i", help="Input bam file",default = "/fast/work/groups/ag_ohler/dharnet_m//Liuetal_pipeline/pipeline/star/ORFext/data/ribo_0h/ribo_0h.sort.bam")
+    parser.add_argument("-f", help="Fasta file", default="/fast/work/groups/ag_ohler/dharnet_m/Splicing_Lausanne/ext_data/annotation/gencode.v24lift37.annotation.orfext.fa")
     parser.add_argument("-v" , default=False ,help="verbose EM ?", dest='verbose', action='store_true')
     parser.add_argument("-e" , default=False ,help="expression only ?", dest='expr_only', action='store_true')
     parser.add_argument("-o", help="ribotrans_test", default="ribotranstest")
     args = parser.parse_args()
     
-
     bam = args.i
     cdsfasta = args.f
 
@@ -207,9 +202,9 @@ if __name__ == '__main__':
         cdsfasta)
     trlength = pd.Series(dict([(s, len(exonseq[s])) for s in exonseq]))
 
-    bamdf = make_bamDF(bam)
+    # assert min(transcript_cdsstart.values()) > 20, "This script needs CDS to be extended, so that e.g. start reads still map to trs"
 
-    assert False
+    bamdf = make_bamDF(bam)
 
     #count only reads overlapping the cds
     bamdf = (bamdf.
@@ -221,114 +216,7 @@ if __name__ == '__main__':
         drop(['cdsend'],axis=1)
     )
 
-    bamdf = add_read_cdscols(bamdf,transcript_cdsstart,transcript_cdsend)
-
-    tr='YPR204W'
-    tr='Q0080'
-    #this gets us atg and sotp codon
-    tr = np.random.choice(list(transcript_cdsstart.keys()))
-    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsstart[tr]+3]
-    exonseq[tr][transcript_cdsend[tr]+1:transcript_cdsend[tr]+1+3]
-
-
-    def get_cdsocc_offsets(bamdf):
-
-        def tally(edgereads,gcols):
-            edgecounts = edgereads.groupby(['tr_id','cdspos','cdsendpos','read_length']).size()
-            edgecounts = edgecounts.reset_index()
-            edgecounts = edgecounts.rename({0:'n'},axis=1)
-            return edgecounts
-        #get reads gained as we move teh cds left
-        gaincounts = tally(
-            bamdf.query('(cdspos <=0) & ((-cdspos) <= (read_length-1))'),
-            ['tr_id','cdspos','cdsendpos','read_length']
-        )
-        gaincounts['phase'] = gaincounts['cdspos']%3
-        #the offset required to gain it
-        gaincounts['offset']=-(gaincounts['cdspos']-gaincounts['phase'])
-        #get reads lost as we move the cds left
-        losscounts = tally(
-            bamdf.query('((cdsendpos-2)<=0) &(  (-(cdsendpos-2))<=read_length-1 )'),
-            ['tr_id','cdspos','cdsendpos','read_length']
-        )
-        losscounts['phase'] = losscounts['cdspos']%3
-        #the offset required to lose it
-        losscounts['cdsendpos'] += -3
-        losscounts['offset']= -(losscounts['cdsendpos']-losscounts['phase'])
-
-        #now make a data frame with gained and lost at each offset
-        glcols = 'tr_id offset phase read_length'.split()
-        gldf = gaincounts[glcols+['n']].merge(losscounts[glcols+['n']],on=glcols)
-  
-        #TODO - find a read that's at the stop codons location, verify it's cdsendpos
-        #now get all combs of values (rl,phase,offset,tr) and make sure there's a value
-        #for each of these
-        cols = ['read_length','phase','offset','tr_id']
-        uniquevallist = [list(np.sort(gldf[col].unique())) for col in cols]
-        fullposdf = pd.DataFrame.from_records(it.product(*uniquevallist),columns=cols)
-        fullposdf = fullposdf.query('offset>3')
-        allposdf = fullposdf.merge(gldf,how='left')
-        allposdf.n_x = allposdf.n_x.fillna(0)
-        allposdf.n_y = allposdf.n_y.fillna(0)
-        #column showing net effect of moving to that offset
-        allposdf['net'] = allposdf.n_x - allposdf.n_y 
-        #select trs for use in our survey
-        # trs2use = allposdf.tr_id.unique() 
-        # allposdf2 = allposdf[allposdf.tr_id.isin(trs2use)]
-        allposdf = allposdf.drop(['n_x','n_y'],axis=1)
-    #    allposdf = allposdf.groupby(['read_length','phase','tr_id'])[['net']]
-        allposdfgrp = allposdf.groupby(['read_length','phase','tr_id'])[['offset','net']]
-        # g = next(x for x in allposdf2grp)
-        #we want, not just the best offset, but the best offsets (given ties might exist)
-        #for each transcript
-        def votefun(df):
-            cs = df.net.cumsum()
-            ofs = df['offset'][cs == cs.max()].values
-            return tuple(ofs)
-        #
-        gvotes = allposdf2grp.apply(lambda x:votefun(x)).explode()
-        gvotes = pd.DataFrame(gvotes)
-        gvotes = gvotes.rename({0:'offset'},axis=1)
-        offsetvotes = gvotes.groupby(['read_length','phase'])['offset'].value_counts()
-        offsetvotes.name = 'n_genes'
-        #we now have a data frame with the number of genes indicating this offset
-        #for each rl,phase,offset
-        offsetvotes = offsetvotes.reset_index()
-        #we then take the best, based on the offset compatible with the most genes
-        bestoffsetvotes = offsetvotes.groupby(['read_length','phase']).apply(lambda x: x.loc[x.n_genes.idxmax()])
-        
-
-        #more simply, we can just get this by combining all trs...        
-        bestoffsetest = allposdf.groupby(['read_length','offset','phase'])['net'].sum().groupby(['read_length','phase']).cumsum().groupby(['read_length','phase']).idxmax()
-        pd.DataFrame(bestoffsetest) 
-        bestoffsetest = pd.DataFrame(bestoffsetest).reset_index()
-        bestoffsetest['bestoffset'] = bestoffsetest['net'].str[1]
-        bestoffsetest = bestoffsetest.drop('net',axis=1)
-
-        return bestoffsetvotes
-    #now print the best offsets
-
-    bestoffsetest['read_length phase bestoffset'.split()].to_csv(args.o+'.bestoffsets.tsv',sep='\t')
-
-    #Now form this I"d like to calculate what happens when I change offsets
-    #This is the same as moving the cds left
-    #which is the sam as adding to cdspos or cds
-    #Currently cdsendpos is the difference between the read start and the 1st nucleotide of the last codon.
-    #This makes it so that 0 or more means outside the cds
-    edgecounts['cdsendpos'] += -3
-    #as we move the cds left we gain start reads and lose ends reads
-    #we want a df with tr_id, read_length, phase offset, gain, loss, net
-    edgecounts['phase'] = edgecounts['cdspos']%3
-    edgecounts['offset'] = -(edgecounts['cdspos'] - edgecounts['phase'])
-    edgecounts.groupby(['offset','phase','read_length'])['count'].sum().reset_index().query('read_length==29')
-
-
-
     print('bam loaded')
-
-
-###############################################################################
-# ## now calculate expression levels
     
     sampreads, transcript_TPMs, TPM_diff, transcript_readcount = ribo_EM(
         bamdf[['read_name', 'tr_id']],
@@ -349,22 +237,6 @@ if __name__ == '__main__':
     tr_expr.to_csv(exprfile,index=False,sep='\t')
     print(exprfile)
 
-
-    #first get the reads at the start
-    
-    # startreads = bamdf[
-    #     (bamdf['cdspos'] <= 0) &
-    #     (bamdf['cdspos'] >= -bamdf['read_length'])
-    # ]
-    # endreads = 
-
-
-    # offsetgainlossdf = 
-
-
-
-
-    assert False
     if not args.expr_only:
         sampreads = sampreads[['read_name', 'tr_id']]
         # sampreadsfull = bamdf

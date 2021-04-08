@@ -9,6 +9,7 @@ if True:
     import pandas as pd
     import numpy as np
     import glob
+    import h5py
 
 # var_exists = 'test_target' in locals() or 'test_target' in globals()
 
@@ -40,7 +41,7 @@ genetic_code = {'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C', 'TTC': 'F', 'TCC
 
 # ribodatafile = '../Liuetal_pipeline/pipeline/ribotrans_process/ribo_0h/ribotrans.csv.gz'
 # ribodatafile = '../ribotrans_process/ribo_0h/ribotrans.csv.gz'
-ribodatafile = '../../yeast_test.csv'
+ribodatafile = 'yeast_test.csv'
 # esmweightfolder = '/scratch/AG_Ohler/dharnet/Gencodev24lift37_tokens/'
 
 # esmweightfolder = '/fast/scratch/users/dharnet_m/tmp/Gencodev24lift37_tokens/'
@@ -86,8 +87,131 @@ n_cods = len(CODON_TYPES)+1 #There needs to be an uknown
 n_len = 512
 n_toks = torch.load(esmfiles[1])['representations'][34].shape[1]
 
-# Index(['Unnamed: 0', 'gene', 'chrom', 'start', 'end', 'codon_idx',
-#       'gene_strand', 'codon', 'pair_prob', 'TPM', 'ribosome_count'])
+
+fasta='/fast/work/groups/ag_ohler/dharnet_m/cortexomics/yeast_test/Yeast.saccer3.fa'
+gtf = '/fast/work/groups/ag_ohler/dharnet_m/cortexomics/yeast_test/Yeast.sacCer3.sgdGene.gtf'
+cdsext,cdsseq,codons = load_anno(gtf, fasta, 0)
+
+
+riboh5 = 'ext_data/2016_Weinberg_RPF.h5'
+
+
+def firstval(dict):
+    return next(iter(dict.values()))
+
+#We maybe want to leave out the middle actually, but that can wait...
+n_len=1024
+rmatsize = n_len*3
+tlbuff= 10*3
+tlbuff=0
+
+#def parse_riboviz_h5(riboh5):
+if True:
+    h5f = h5py.File(riboh5,'r')
+    h5genes = list(h5f.keys())
+    gene1 = h5genes[666]
+
+    rdatalist=[]
+    for gene1 in h5genes:
+        d1 = h5f[gene1]
+        dsetname = list(d1.keys())[0]
+        d2 = d1[dsetname]
+        readsname = list(d2.keys())[0]
+        readsdata = h5f[gene1][dsetname][readsname]
+        startpos = readsdata.attrs['start_codon_pos'][0]
+        stoppos = readsdata.attrs['stop_codon_pos'][0]
+        readsdata['data'][startpos-1:stoppos]
+        #shows names of attributes
+
+        trlen = readsdata['data'].shape[0]
+        lbuff = int(readsdata.attrs['buffer_left'])
+        rbuff = int(readsdata.attrs['buffer_right'])
+        cdslen = int(trlen - lbuff - rbuff)
+
+        if cdslen > rmatsize: continue  
+        
+        cdsstartp0 = (startpos-1)
+        cdsstopp0 = (startpos-1+cdslen)
+        cdsstopp0 = (stoppos-2)
+
+        #for each cds well take 
+
+
+        readsdata['data'][cdsstartp0:cdsstartp0+tlbuff+rmatsize+1]
+
+        rdata = readsdata['data'][cdsstartp0:cdsstopp0]
+        bufferbps = rmatsize - rdata.shape[0]
+        rbuffer = np.zeros([bufferbps,rdata.shape[1]])
+        rdata= np.concatenate([rdata,rbuffer])
+        rdatalist.append((rdata,gene1,lbuff,cdslen))
+
+    rlens = readsdata.attrs['lengths']
+
+
+rdatatens = np.stack([i[0] for i in rdatalist])
+keeplens = (rlens >= 25) &(rlens <= 35)
+rlens = rlens[keeplens]
+
+rdatatens = rdatatens[:,:,keeplens]
+
+rdatagenes = [i[1] for i in rdatalist]
+gene2num = pd.Series(range(0, len(rdatagenes)), index=rdatagenes)
+
+codonsdf= codons[codons.gene.isin(rdatagenes)]
+
+codons_ts = torch.sparse.FloatTensor(
+        torch.LongTensor([
+            gene2num[codonsdf.gene].values,
+            codonsdf.codon_idx.values+tlbuff
+        ]),
+        torch.LongTensor(codonnum[codonsdf.codon].values),
+        torch.Size([rdatatens.shape[0],int(rmatsize/3) ])).to_dense()
+
+#note this endds up w62 codons tall cos the stops are missing
+rdcodons = nn.functional.one_hot(codons_ts).transpose(2,1).float()
+
+assert codons.shape==torch.Size([len(rdatagenes),62,n_len])
+assert readsdata.shape==torch.Size([len(rdatagenes),n_rls])
+
+rdatatens = rdatatens
+
+phase=0
+codonind=3
+rlind = 0
+position=1#codon position relative to codon
+
+cinds = range(0,rdcodons.shape[1])
+positions = [int(p) for p in range(-12,3) ]
+phases = [0,1,2]
+
+def codonloc(rdcodons,codonind,position):
+    codonlocs = rdcodons[:,codonind,:]==1
+    codonlocs = codonlocs.roll(dims=1,shifts=position)
+    return codonlocs
+    
+#normalize 
+rdatanorm =  (rdatatens/np.expand_dims(rdatatens.sum(axis=(1,2))+1,axis=[1,2]))
+
+#get metacodons
+posrl_dens = [ [rdatanorm[:,phase::3,:][codonloc(rdcodons,cind,pos)].mean(axis=0)  for pos in positions] for cind in cinds]
+posrl_dens = np.stack(posrl_dens)
+posrlstddev = posrl_dens.std(axis=0)
+posrlstddev /= posrl_dens.mean(axis=0)
+
+def txtplot(x,y):
+    plx.clear_plot()
+    plx.scatter(x,y,rows = 20, cols = 40)
+    plx.show()
+
+txtplot(positions,posrlstddev[:,6])
+
+
+
+
+
+
+
+#now i can subset the rdata tensor with the coon tensor.
 
 if True:
     print('parsing to tensors...')
@@ -249,7 +373,7 @@ if True:
 
 
 #calculate average signal per codon
-codstrengths = [ ((ribosignal)/(ribodens.exp().unsqueeze(1)))[codons[:,i,:]==1].mean().item() for i in range(0,n_cods)]
+codstrengths = [ ((ribosignal)/(ribodens.exp().unsqueeze(1)) )[codons[:,i,:]==1].mean().item() for i in range(0,n_cods)]
 codstrengths = torch.FloatTensor(codstrengths[:]).log()
 
 

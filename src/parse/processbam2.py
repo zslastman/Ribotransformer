@@ -163,7 +163,7 @@ def makePredTraining(bamdf):
                          'nt_n-1', 'nt_n', '5_offset', '3_offset', 'asite']]
     return training
 
-def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
+def get_coddf(trstouse, transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
     coddfs = []
     # def tcode():
     for tr in trstouse:
@@ -178,18 +178,19 @@ def get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength ):
         coddf = pd.DataFrame(zip(codstarts, codidx, cods))
         coddf.columns = ['start', 'codon_idx', 'codon']
         coddf['end'] = coddf['start']+3
-        coddf['chrom'] = tr
+        coddf['tr_id'] = tr
         coddfs.append(coddf)
 
     # %prun -l 10 tcode()
     coddf = pd.concat(coddfs,axis=0)
-    coddf['gene_strand']='+'
-    coddf['gene'] = coddf['chrom']
+    #
+    #
     return coddf
 
 
 ""
 if __name__ == '__main__':
+
     sys.argv=['']
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", help="Input bam file",default = "pipeline/weinberg_yeast_riboAligned.out.sort.bam")
@@ -203,13 +204,13 @@ if __name__ == '__main__':
     bam = args.i
     cdsfasta = args.f
 
-    transcript_CDS_len, transcript_cdsstart, transcript_cdsend, exonseq, transript_gene = transcript_initialize(
+    transcript_CDS_len, transcript_cdsstart, transcript_cdsend, exonseq, transcript_gene = transcript_initialize(
         cdsfasta)
     trlength = pd.Series(dict([(s, len(exonseq[s])) for s in exonseq]))
 
     bamdf = make_bamDF(bam)
 
-    assert False
+    print('bam loaded')
 
     #count only reads overlapping the cds
     bamdf = (bamdf.
@@ -223,13 +224,40 @@ if __name__ == '__main__':
 
     bamdf = add_read_cdscols(bamdf,transcript_cdsstart,transcript_cdsend)
 
-    tr='YPR204W'
-    tr='Q0080'
-    #this gets us atg and sotp codon
-    tr = np.random.choice(list(transcript_cdsstart.keys()))
-    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsstart[tr]+3]
-    exonseq[tr][transcript_cdsend[tr]+1:transcript_cdsend[tr]+1+3]
+    ###############################################################################
+    # ## now calculate expression levels
+    
+    sampreads, transcript_TPMs, TPM_diff, transcript_readcount = ribo_EM(
+        bamdf[['read_name', 'tr_id']],
+        transcript_CDS_len,
+        numloops=1,
+        verbose=args.verbose
+    )
+    
+    counts = sampreads.groupby('tr_id').size()
+    counts.name='read_count'
+    
+    tr_expr = pd.DataFrame(pd.Series(transcript_TPMs).reset_index()).rename(columns={'index':'tr_id',0:'RPF_dens'}).merge(
+        pd.DataFrame(pd.Series(transcript_CDS_len).reset_index()).rename(columns={'index':'tr_id',0:'cds_len'})).merge(
+        pd.DataFrame(pd.Series(counts).reset_index()).rename(columns={'index':'tr_id',0:'read_count'})
+    )
+    
+    exprfile = args.o+'.psites.csv'.replace('.csv','')+'.tr_expr.tsv'
+    tr_expr.to_csv(exprfile,index=False,sep='\t')
+    print(exprfile)
 
+
+    sampreads = (sampreads[['read_name', 'tr_id']].
+        merge( bamdf['read_name read_length tr_id start cdspos 5_offset'.split()], how='inner')
+        )
+    sampreads = sampreads.rename({'5_offset':'phase'},axis=1)
+
+   
+
+    # this gets us atg and sotp codon
+    # tr = np.random.choice(list(transcript_cdsstart.keys()))
+    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsstart[tr]+3]
+    # exonseq[tr][transcript_cdsend[tr]+1:transcript_cdsend[tr]+1+3]
 
     def get_cdsocc_offsets(bamdf):
 
@@ -276,7 +304,7 @@ if __name__ == '__main__':
         # trs2use = allposdf.tr_id.unique() 
         # allposdf2 = allposdf[allposdf.tr_id.isin(trs2use)]
         allposdf = allposdf.drop(['n_x','n_y'],axis=1)
-    #    allposdf = allposdf.groupby(['read_length','phase','tr_id'])[['net']]
+        #allposdf = allposdf.groupby(['read_length','phase','tr_id'])[['net']]
         allposdfgrp = allposdf.groupby(['read_length','phase','tr_id'])[['offset','net']]
         # g = next(x for x in allposdf2grp)
         #we want, not just the best offset, but the best offsets (given ties might exist)
@@ -286,7 +314,7 @@ if __name__ == '__main__':
             ofs = df['offset'][cs == cs.max()].values
             return tuple(ofs)
         #
-        gvotes = allposdf2grp.apply(lambda x:votefun(x)).explode()
+        gvotes = allposdfgrp.apply(lambda x:votefun(x)).explode()
         gvotes = pd.DataFrame(gvotes)
         gvotes = gvotes.rename({0:'offset'},axis=1)
         offsetvotes = gvotes.groupby(['read_length','phase'])['offset'].value_counts()
@@ -295,213 +323,154 @@ if __name__ == '__main__':
         #for each rl,phase,offset
         offsetvotes = offsetvotes.reset_index()
         #we then take the best, based on the offset compatible with the most genes
-        bestoffsetvotes = offsetvotes.groupby(['read_length','phase']).apply(lambda x: x.loc[x.n_genes.idxmax()])
-        
+        bestoffsetvotes = (offsetvotes.groupby(['read_length','phase']).
+            apply(lambda x: x.loc[x.n_genes.idxmax()]) )
+        bestoffsetvotes = bestoffsetvotes.reset_index(drop=True)
 
         #more simply, we can just get this by combining all trs...        
-        bestoffsetest = allposdf.groupby(['read_length','offset','phase'])['net'].sum().groupby(['read_length','phase']).cumsum().groupby(['read_length','phase']).idxmax()
-        pd.DataFrame(bestoffsetest) 
-        bestoffsetest = pd.DataFrame(bestoffsetest).reset_index()
-        bestoffsetest['bestoffset'] = bestoffsetest['net'].str[1]
-        bestoffsetest = bestoffsetest.drop('net',axis=1)
+        bestoffsetsum = allposdf.groupby(['read_length','offset','phase'])['net'].sum().groupby(['read_length','phase']).cumsum().groupby(['read_length','phase']).idxmax()
+        pd.DataFrame(bestoffsetsum) 
+        bestoffsetsum = pd.DataFrame(bestoffsetsum).reset_index()
+        bestoffsetsum['bestoffset'] = bestoffsetsum['net'].str[1]
+        bestoffsetsum = bestoffsetsum.drop('net',axis=1)
+        #now print the best offsets
 
-        return bestoffsetvotes
-    #now print the best offsets
+        return bestoffsetvotes,bestoffsetsum
 
-    bestoffsetest['read_length phase bestoffset'.split()].to_csv(args.o+'.bestoffsets.tsv',sep='\t')
-
-    #Now form this I"d like to calculate what happens when I change offsets
-    #This is the same as moving the cds left
-    #which is the sam as adding to cdspos or cds
-    #Currently cdsendpos is the difference between the read start and the 1st nucleotide of the last codon.
-    #This makes it so that 0 or more means outside the cds
-    edgecounts['cdsendpos'] += -3
-    #as we move the cds left we gain start reads and lose ends reads
-    #we want a df with tr_id, read_length, phase offset, gain, loss, net
-    edgecounts['phase'] = edgecounts['cdspos']%3
-    edgecounts['offset'] = -(edgecounts['cdspos'] - edgecounts['phase'])
-    edgecounts.groupby(['offset','phase','read_length'])['count'].sum().reset_index().query('read_length==29')
-
-
-
-    print('bam loaded')
-
-
-###############################################################################
-# ## now calculate expression levels
+    bestoffsetvotes,bestoffsetsum = get_cdsocc_offsets(bamdf)
     
-    sampreads, transcript_TPMs, TPM_diff, transcript_readcount = ribo_EM(
-        bamdf[['read_name', 'tr_id']],
-        transcript_CDS_len,
-        numloops=200,
-        verbose=args.verbose
-    )
+
+    #saving work in progress
+    import shelve
+    filename='image.shelve.out'
+    my_shelf = shelve.open(filename,'n') # 'n' for new
+    for key in dir():
+        try:
+            my_shelf[key] = globals()[key]
+        except TypeError:
+            #
+            # __builtins__, my_shelf, and imported modules can not be shelved.
+            #
+            print('ERROR shelving: {0}'.format(key))
+    my_shelf.close()
+
+    # my_shelf = shelve.open(filename)
+    # for key in my_shelf:
+    #     globals()[key]=my_shelf[key]
+    # my_shelf.close()
+
+
+    # bestoffsetvotes = 
+    # sampreads.merge(bestoffsetvotes[['read_length','phase','offset']])
+    sampreads = sampreads.merge(bestoffsetvotes[['read_length','phase','offset']])
+    sampreads = sampreads.assign(cdspos = lambda df:df.cdspos + df.offset)
+    sampreads = sampreads.assign(start = lambda df:df.start + df.offset)
+    sampreads = sampreads.drop('offset',axis=1)
+    sampreads = sampreads.assign(codon_idx = lambda df: (df['cdspos'] - df['phase'])%3)
     
-    counts = sampreads.groupby('tr_id').size()
-    counts.name='read_count'
+    gtpms = pd.concat([pd.Series(transcript_gene,name='gene'),pd.Series(dict(transcript_TPMs),name='TPM')],axis=1)
+    TPMTHRESH = 0
+    #get trs above threshold, but also the best for the gene
+    trstouse = gtpms.query('TPM>@TPMTHRESH').sort_values('TPM',ascending=False).groupby('gene').head(1)['TPM'].index.to_series()
+    # 
+    coddf = get_coddf(trstouse, transcript_cdsstart, transcript_cdsend, exonseq, trlength)
+
+    # sampreadssamp = sampreads.head(10000)
+    sampreadssamp = sampreads
+    # wide = (sampreadssamp.groupby(['tr_id','start','cdspos','read_length','phase']).
+    #     size().
+    #     reset_index().
+    #     pivot_table(index=['tr_id','start','cdspos'],
+    #         columns=['read_length','phase'])
+    # )
+    # wide.columns = [str(c[1])+'_'+str(c[2]) for c in wide.columns]
+    sampreadssamp = sampreadssamp.assign(codon_idx=lambda x:(x.cdspos-x['phase'])/3)
+    sumpsites = sampreadssamp.groupby(['tr_id','codon_idx']).size().reset_index().rename({0:'ribosome_count'},axis=1)
+    sumpsites = coddf[['tr_id','codon_idx','codon']].merge(sumpsites[['tr_id','codon_idx','ribosome_count']],how='left')
+    sumpsites.ribosome_count = sumpsites.ribosome_count.fillna(0) 
     
-    tr_expr = pd.DataFrame(pd.Series(transcript_TPMs).reset_index()).rename(columns={'index':'tr_id',0:'RPF_dens'}).merge(
-        pd.DataFrame(pd.Series(transcript_CDS_len).reset_index()).rename(columns={'index':'tr_id',0:'cds_len'})).merge(
-        pd.DataFrame(pd.Series(counts).reset_index()).rename(columns={'index':'tr_id',0:'read_count'})
-    )
+    sumpsites.to_csv(args.o+'.psites.csv',index=False)
+    print(args.o+'.psites.csv')
+    tpmdf = pd.Series(transcript_TPMs).reset_index().rename({'index':'tr_id',0:'TPM'},axis=1)
+    tpmdf.to_csv(args.o+'.ribotpm.csv',index=False)
+    print(args.o+'.ribotpm.csv')
+    cdsdims = pd.concat([pd.Series(transcript_cdsstart),pd.Series(transcript_cdsend)+1,trlength],axis=1) 
+    cdsdims.columns=['aug','stop','length']
+    cdsdims.to_csv(args.o+'.cdsdims.csv',index=False)
+    print(args.o+'.cdsdims.csv')
+
+    tr=sumpsites.tr_id[0]
+    NTOKS=512
+    NFLANK=5
+#    codons_available = trcodons.n_cods+(2*NFLANK)
+
+
+    psitetrs=sumpsites.tr_id.unique()
+    trcodons = ((cdsdims.stop-cdsdims.aug ) / 3)[psitetrs]
+    #include flanks in this number
+    trcodons = trcodons + (2*NFLANK)
+    trcodons.name = 'n_cods'
+    trcodons.index.name = 'tr_id'
+    excesscodons = ((trcodons)-NTOKS).clip(0)
+    # trcodons = trcodons.reset_index()
+    excesscodons[tr]
+    trcodons[tr]
+
+
+
+    # firsthalfend = cdsdims.aug + np.ceil((trcodons/2)).clip(upper=256)
+    firsthalfend = np.ceil((trcodons/2)).clip(upper=NTOKS/2)-NFLANK#1based
+    firsthalfend[tr]
+    sechalfstart = (trcodons-NFLANK) - np.floor((trcodons/2)).clip(upper=NTOKS/2)
+    sechalfstart[tr]
+
+    #these two are the right size, it seems
+    firsthalfend[tr] - (0-NFLANK)
+    (trcodons[tr]-NFLANK)-sechalfstart[tr]
+    (sechalfstart - firsthalfend)==excesscodons
+
+    #so this defines the middle region, in 0,1 index
+    middlestart=firsthalfend
+    middleend=sechalfstart
+
+    sumpsites2 = sumpsites
+
+    sumpsites2 = sumpsites2[sumpsites2.codon_idx<(trcodons[sumpsites2.tr_id]-NFLANK).values]
+    sumpsites2 = sumpsites2[sumpsites2.codon_idx>= -NFLANK]
+    inmiddle = (firsthalfend[sumpsites2.tr_id].values<=sumpsites2.codon_idx) & (sumpsites2.codon_idx < sechalfstart[sumpsites2.tr_id].values)
+    sumpsites2 = sumpsites2[~inmiddle]
+
+    assert (sumpsites2.groupby('tr_id').size()[trcodons.index] == trcodons.clip(upper=NTOKS)).all()
+
+    sumpsites = sumpsites2
+
+    ################################################################################
+    ########Now parse into tensors
+    ################################################################################
     
-    exprfile = args.o.replace('.csv','')+'.tr_expr.tsv'
-    tr_expr.to_csv(exprfile,index=False,sep='\t')
-    print(exprfile)
 
 
-    #first get the reads at the start
-    
-    # startreads = bamdf[
-    #     (bamdf['cdspos'] <= 0) &
-    #     (bamdf['cdspos'] >= -bamdf['read_length'])
-    # ]
-    # endreads = 
+    sumpsites2.groupby('tr_id').size().max()
+
+    sumpsites.merge(trcodons,).query('(codon_idx+1) <= (n_cods - NFLANK)')
+    sumpsites[sumpsites.tr_id==tr]
 
 
-    # offsetgainlossdf = 
-
-
-
-
-    assert False
-    if not args.expr_only:
-        sampreads = sampreads[['read_name', 'tr_id']]
-        # sampreadsfull = bamdf
-        sampreadsfull = sampreads.merge(bamdf, how='inner')
-
-        sampreadsfull = add_seqinfo(sampreadsfull, transcript_cdsstart, exonseq, trlength)
-
-        gtpms = pd.concat([pd.Series(transript_gene,name='gene'),pd.Series(dict(transcript_TPMs),name='TPM')],axis=1)
-        TPMTHRESH = 0
-        trstouse = gtpms.query('TPM>@TPMTHRESH').sort_values('TPM',ascending=False).groupby('gene').head(1)['TPM'].index.to_series()
-
-        coddf = get_coddf(transcript_cdsstart, transcript_cdsend, exonseq, trlength)
-
-        coddf = coddf.merge(pd.Series(transcript_TPMs,name='TPM'),left_on='chrom',right_index=True).assign(pair_prob=0)
-        
-        startposmeta = sampreadsfull.query('cdspos>-32 & cdspos< 32').groupby('cdspos').size()
-
-        np.argmax(startposmeta)
-
-        training = makePredTraining(sampreadsfull[sampreadsfull.tr_id.isin(trstouse)])
-
-        model = PredictAsite(training, sampreadsfull, 'rf', False,cdsIdxDf = coddf)
-        print('fit A sites')
-        model.rfFit()
-        model.rfPredict()
-        
-        print("[execute]\tlocalize the a-site codon and create coverage df", file=sys.stderr)
-
-        model.cds['gene_strand'] = '+'
-        model.cds['strand'] = '+'
-        model.cds = model.cds.rename(columns={'tr_id': 'chrom'})
-        dataFrame = model.recoverAsite()
-
-        dataFrame.to_csv(args.o,index=False)
+    tr='YPR204C-A' 
+    trcodons[tr]
+    #this looks right, so that e.g. in a tr with 160 codons, codon_idx==159 is the last cododing codon, and 160 is the stop
+    coddf.query('codon_idx >= -3').query('tr_id=="YPR204C-A"').merge(trcodons).query('codon_idx < n_cods+3')
 
 
 
 
 
 
-# #looks like a lot of reads are extra-ORF, but this isn't due to frame shifting (chceck)
 
 
-# tpmLB = 1
-# unmap=None
-# out=None
-# # start model fitting
-# print("[execute]\tStart the modelling of translation efficiency (TE)", file=sys.stderr)
-# mod = ModelTE(dataFrame, unmap, out, tpmLB)
-# print("[execute]\tLoading data", file=sys.stderr)
-# mod.loadDat()
-# print("[execute]\tFiltering the df", file=sys.stderr)
-# mod.filterDf()
-# print("[execute]\tScaling the variables", file=sys.stderr)
-# mod.varScaling()
-# print("[execute]\tFitting the GLM", file=sys.stderr)
-# X, y, offsets, numCodons, numGenes, varsNames = mod.glmnetArr()
-# mod.glmnetFit(X, y, offsets, numCodons, numGenes, varsNames, lambda_min = 0.13)
-# mod.codonBetas.to_csv('pipeline/trtestcodondts.csv')
-
-# fplen = 0
-# ncods = 4
-# tplen = 3
-# transcript_cdsstart['foo'] = fplen
-# transcript_cdsend['foo'] = transcript_cdsstart['foo']+(3*(ncods-1))+2
-# trlength['foo'] = transcript_cdsend['foo']+1+tplen
-# exonseq['foo'] = ('A'*fplen)+('C'*(3*ncods))+('G'*tplen)
-# tr = 'foo'
-# exonseq.pop('foo', None)
-
-# transcript_cdsstart['foo']
-# exonseq[tr][transcript_cdsend['foo']+1]
-
-###############################################################################
-# # now do asite model
-# ################################################################################
-
-
-# # model = PredictAsite(training, bamdf, 'rf', False)
-
-# model.rfFit()
-
-# model.rfPredict()
-
-# readdf = model.cds
-
-# readdf.asite.value_counts()
-
-# readdf.codon = readdf.cdspos + readdf.asite
-
-# readdf = readdf.query('cdsendpos<=0').query('read_length > ( - cdspos)')
-
-# readdf = readdf.assign(codidx=(np.floor((readdf.cdspos + readdf.asite) / 3)))
-
-# countdf = readdf.groupby(['tr_id', 'codidx'], observed=True).size(
-# ).reset_index().rename(columns={0: 'ribo_count'})
-
-# # for each tr, we want to go back as many CODONS as we can.
-# cdsstarts = pd.Series(transcript_cdsstart)
-# cdsends = pd.Series(transcript_cdsend)
-# cdslens = pd.Series(transcript_CDS_len)
-# fpcodonbps = (np.floor((cdsstarts-1)/3)*3)
-# tpcodonbps = (3*np.floor((trlens - cdsends) / 3))
-
-# testtr = trlens.index[0]
-
-# codondfs = []
-# for tr in readdf['tr_id'].unique()[0:4]:
-#     codons = textwrap.wrap(
-#         exonseq[tr][int((cdsstarts[tr] - fpcodonbps[tr]) - 1)                    :int(cdsends[tr]+tpcodonbps[tr])],
-#         3
-#     )
-#     lcodon = -int(fpcodonbps[tr]/3)
-#     rcodon = int((cdslens[tr]+tpcodonbps[tr])/3)
-#     indices = list(range(lcodon, rcodon))
-#     #
-#     codondf = pd.concat([pd.Series(codons), pd.Series(indices)], axis=1)
-#     codondf = codondf.assign(tr_id=tr)
-#     codondf.columns = ['codon', 'codidx', 'tr_id']
-#     codondfs.append(codondf)
-
-# codondf = pd.concat(codondfs, axis=0)
-
-# codondf = codondf.merge(countdf, how='left')
-
-# codondf['ribo_count'] = codondf['ribo_count'].fillna(0)
-
-# numloops = 20
-# path_out_dir = 'emtest'
-
-
-# # now run EM to distribute the reads appropriately
-
-# bamdf
-
-#      query('asite >= 9').
-#             query('asite <= 18').
-#             query('asite >= (read_length / 2 - 1)')
-
-#okay so we have codon values that aren't multiples of three, and non ATG counts...
+    # # this gets us atg and sotp codon
+    # tr = np.random.choice(list(transcript_cdsstart.keys()))
+    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsstart[tr]+3]
+    # exonseq[tr][transcript_cdsend[tr]+1:transcript_cdsend[tr]+1+3]
+    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsend[tr]+1]
+    # exonseq[tr][transcript_cdsstart[tr]:transcript_cdsend[tr]+1+3]

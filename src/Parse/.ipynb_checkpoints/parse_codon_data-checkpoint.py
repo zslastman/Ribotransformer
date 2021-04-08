@@ -14,7 +14,7 @@ if True:
 
 # if not var_exists:
 
-GET_ESM_TOKENS = False
+GET_ESM_TOKENS = True
 
 # +
 if not 'USE_SEQ_FEATURES' in globals().keys():
