@@ -11,6 +11,8 @@ import numpy as np
 import glob
 import h5py
 import copy
+from collections import OrderedDict
+
 
 RIBODENS_THRESH = 0.5
 
@@ -27,6 +29,7 @@ genetic_code = {'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C', 'TTC': 'F', 'TCC
                 'ATA': 'I', 'ACA': 'T', 'AAA': 'K', 'AGA': 'R', 'ATG': 'M', 'ACG': 'T', 'AAG': 'K', 'AGG': 'R',
                 'GTT': 'V', 'GCT': 'A', 'GAT': 'D', 'GGT': 'G', 'GTC': 'V', 'GCC': 'A', 'GAC': 'D', 'GGC': 'G',
                 'GTA': 'V', 'GCA': 'A', 'GAA': 'E', 'GGA': 'G', 'GTG': 'V', 'GCG': 'A', 'GAG': 'E', 'GGG': 'G'}
+
 codonnum = pd.Series(range(0, len(CODON_TYPES)), index=CODON_TYPES)+1
 basenum = pd.Series(range(0, 4), index=['A','C','G','T'])+1
 
@@ -136,14 +139,13 @@ class RiboTransData(data.Dataset):
         ribodens = ribodens[~ribodens.index.isin(lowdensgenes)]
         #
         # self.lowdensgenes = lowdensgenes
-        ugenes = reads2use.tr_id.unique()
+        self.ugenes = reads2use.tr_id.unique()
 
-
-        n_genes = ugenes.shape[0]
+        n_genes = self.ugenes.shape[0]
         print('using '+str(n_genes)+' genes')
         
         #index of the gene position
-        self.gene2num = pd.Series(range(0, len(ugenes)), index=ugenes)
+        self.gene2num = pd.Series(range(0, len(self.ugenes)), index=self.ugenes)
         #index of the codon position
         codindex = reads2use.groupby('tr_id').codon_idx.rank()-1
         #ribosignal
@@ -157,7 +159,8 @@ class RiboTransData(data.Dataset):
         assert self.ribosignal.shape == torch.Size([n_genes,NTOKS])
 
         #codons
-        self.codons = torch.sparse.FloatTensor(
+        self.data = OrderedDict()
+        self.data['codons'] = torch.sparse.FloatTensor(
             torch.LongTensor([
                 self.gene2num[reads2use.tr_id].values,
                 codindex
@@ -165,16 +168,15 @@ class RiboTransData(data.Dataset):
             torch.LongTensor(self.codonnum[reads2use.codon].values),
             torch.Size([n_genes, NTOKS])).to_dense()
 
-        self.codons = nn.functional.one_hot(self.codons).transpose(2,1).float()
-        assert self.codons.shape == torch.Size([n_genes,self.codonnum.shape[0]+1,NTOKS])
+        self.data['codons'] = nn.functional.one_hot(self.data['codons']).transpose(2,1).float()
+        assert self.data['codons'].shape == torch.Size([n_genes,self.codonnum.shape[0]+1,NTOKS])
         # TPMs = read_tbl[['gene', 'TPM']].drop_duplicates().set_index('gene')
         # TPMs = TPMs.TPM[ugenes]
         # TPMs = torch.FloatTensor(TPMs)
         # assert torch.isfinite(ribodens).all()
         self.ribodens = torch.log(ribosignal.mean(axis=1))
-
-        i=1        
-        self.seqfeats = []
+    
+        self.data['seqfeats'] = []
         for i in range(1,4):
             numseq = self.basenum[reads2use.codon.str.split('',expand=True)[i].values].values
             denseseqfeats = torch.sparse.FloatTensor(
@@ -184,17 +186,16 @@ class RiboTransData(data.Dataset):
                 ]),
                 torch.LongTensor(numseq),
                 torch.Size([n_genes, NTOKS])).to_dense()
-            self.seqfeats.append(nn.functional.one_hot(denseseqfeats))
-        self.seqfeats = torch.cat(self.seqfeats,axis=2).transpose(2,1).float()
+            self.data['seqfeats'].append(nn.functional.one_hot(denseseqfeats))
+        self.data['seqfeats'] = torch.cat(self.data['seqfeats'],axis=2).transpose(2,1).float()
 
-        # return(ribodens,ribosignal,codons,seqfeats)
 
-        # self.lowdensgenes
+        self.batch_size=2
+
         self.gene2num
-        self.codons
+        self.ugenes
         self.ribosignal
-        self.seqfeats
-        self.rtensornms = ['codons','ribosignal','seqfeats']
+
 
 
     def subset(self,idx):
@@ -207,38 +208,37 @@ class RiboTransData(data.Dataset):
         srdata.gene2num = pd.Series(range(0, len(srdata.gene2num)),index =srdata.gene2num.index)
         return srdata
         
-    def add_tensor(self,esmgenes)
-        intgenes = esmgenes[pd.Series(esmgenes).isin(rdata.gene2num.index)]
+    def add_tensor(self,esmgenes,esmtensor):
+        nameov = pd.Series(esmgenes).isin(rdata.gene2num.index)
+        intgenes = esmgenes[nameov]
+        esmtensor = esmtensor[nameov]
         self = self.subset(intgenes)
-        self.__setattr__(tensname,esmtensor)
-        if not tensname in self.rtensornms: self.rtensornms += [tensname]
+        self.data[tensname]=esmtensor
+
+    def get_batch(batchinds):
+        device = self.device()
+        genes = self.ugenes[batchinds]
+        data = torch.cat([d[batchinds] for d in self.data.values()],axis=1)
+        target = self.target[batchinds]
+        offset = self.offset[batchinds]
+        return genes.to(device),data.to(device), target.to(device), offset.to(device)
+
+    def __iter__ (self):
+        indices=np.random.permutation(len(self))
+
+        for batchind in range(0, len(self), self.batch_size):
+            print(batchind)
+            pass
 
 
-    def cget_batch(source, targetsource, offsetsource, i, device, bptt=100):
-        if device is None:device = torch.device('cpu')
-        seq_len = min(bptt, len(source) - 1 - i)
-        data = self.get_data[i:i+seq_len]
-        # target = targetsource[i:i+seq_len]
-        target = targetsource[i:i+seq_len].unsqueeze(1)
-        # offset = offsetsource[i:i+seq_len].unsqueeze(1).unsqueeze(1)
-        offset = offsetsource[i:i+seq_len].unsqueeze(1).unsqueeze(1)
-        return data.to(device), target.to(device), offset.to(device)
-
-    def __getitem__(self, index):
-        # get data
-        x = self.get_data("data", index)
-        if self.transform:
-            x = self.transform(x)
-        else:
-            x = torch.from_numpy(x)
-
-        # get label
-        y = self.get_data("label", index)
-        y = torch.from_numpy(y)
-        return (x, y)
+            seq_len = min(self.batchsize, len(self)  - batchind)
+            batchinds = indices[batchind:batchind+seq_len]
+            batch = self.get_batch(batchinds)
+            # yield batch
 
     def __len__(self):
         return len(srdata.gene2num)
+
 #this is for dev - updating our object
 if not globals().get('rdata',None) is None:
     for k,v in RiboTransData.__dict__.items():
@@ -260,7 +260,7 @@ tokentensorfile = 'yeast_test_esmtensor.pt'
 esmgenes,esmtensor = torch.load(open(tokentensorfile,'rb'))
 
 tensname='esmtokens'
-esmrdata.add_tensor(esmgenes,esmtensor,tensname):
+srdata.add_tensor(esmgenes,esmtensor,tensname)
     # self=
 
 esmrdata.get_batch()

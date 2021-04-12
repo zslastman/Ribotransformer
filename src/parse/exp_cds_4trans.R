@@ -298,7 +298,6 @@ shortnamefile%>%normalizePath(mustWork=TRUE)%>%message
 
 message(normalizePath(paste0(outprefix,'.fa'),mustWork=TRUE))
 
-
 if(FALSE){
   seqs=readDNAStringSet('pipeline/yeast_transcript.ext.fa')
   namedf = names(seqs)%>%str_split('\\|')%>%simplify2array%>%t%>%as.data.frame

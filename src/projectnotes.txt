@@ -1,0 +1,12 @@
+objectives:
+
+1) Get a piece of code up, on github, that does something useful.
+
+
+
+#A site alignment via codon variance alignment.
+#The coding fasta would be one step.
+
+
+
+#stuck on the autoencoder thing rn.
