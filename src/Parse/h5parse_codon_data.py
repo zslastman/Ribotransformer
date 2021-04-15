@@ -76,6 +76,8 @@ print('using reads file '+ ribodatafile)
 
 
 #parse transcript names out of the esmfile names
+esmweightfolder = '/fast/scratch/users/dharnet_m/tmp/yeast_tokens/'
+esmfiles = glob.glob(esmweightfolder+'/*')
 if 'yeast' in ribodatafile:
     esmtrs =pd.Series(esmfiles).str.extract('.*/(.*?).pt')[0].values    
 else:

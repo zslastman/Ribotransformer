@@ -15,6 +15,18 @@ print('defining...')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+n_genes = rdata.gene2num
+allinds = np.array(random.sample(range(0,n_genes),k=n_genes))
+
+traininds = allinds[0:(len(allinds)-1000)]
+testinds = allinds[(len(allinds)-1000):(len(allinds)-500)]
+valinds = allinds[(len(allinds)-500):]
+
+train_data, train_target = fakecodonseqs1h[traininds],fakesignal[traininds]
+val_data, val_target = fakecodonseqs1h[valinds],fakesignal[valinds]
+test_data, test_target = fakecodonseqs1h[testinds],fakesignal[testinds]
+
+
 #ninp is the embedding dimension
 class Convmodel(nn.Module):
     def __init__(self, ninp, out, k, dropout=0.5):

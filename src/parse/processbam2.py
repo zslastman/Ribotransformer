@@ -340,24 +340,24 @@ if __name__ == '__main__':
     bestoffsetvotes,bestoffsetsum = get_cdsocc_offsets(bamdf)
     
 
-    #saving work in progress
+    # #saving work in progress
     import shelve
     filename='image.shelve.out'
-    my_shelf = shelve.open(filename,'n') # 'n' for new
-    for key in dir():
-        try:
-            my_shelf[key] = globals()[key]
-        except TypeError:
-            #
-            # __builtins__, my_shelf, and imported modules can not be shelved.
-            #
-            print('ERROR shelving: {0}'.format(key))
-    my_shelf.close()
-
-    # my_shelf = shelve.open(filename)
-    # for key in my_shelf:
-    #     globals()[key]=my_shelf[key]
+    # my_shelf = shelve.open(filename,'n') # 'n' for new
+    # for key in dir():
+    #     try:
+    #         my_shelf[key] = globals()[key]
+    #     except TypeError:
+    #         #
+    #         # __builtins__, my_shelf, and imported modules can not be shelved.
+    #         #
+    #         print('ERROR shelving: {0}'.format(key))
     # my_shelf.close()
+
+    my_shelf = shelve.open(filename)
+    for key in my_shelf:
+        globals()[key]=my_shelf[key]
+    my_shelf.close()
 
 
     # bestoffsetvotes = 
@@ -404,65 +404,45 @@ if __name__ == '__main__':
     NFLANK=5
 #    codons_available = trcodons.n_cods+(2*NFLANK)
 
+    def trim_middle(sumpsites,cdsdims,NFLANK):
+        psitetrs=sumpsites.tr_id.unique()
+        trcodons = ((cdsdims.stop-cdsdims.aug ) / 3)[psitetrs]
+        #include flanks in this number
+        trcodons = trcodons + (2*NFLANK)
+        trcodons.name = 'n_cods'
+        trcodons.index.name = 'tr_id'
+        excesscodons = ((trcodons)-NTOKS).clip(0)
+        # trcodons = trcodons.reset_index()
+        # excesscodons[tr]
+        # trcodons[tr]
 
-    psitetrs=sumpsites.tr_id.unique()
-    trcodons = ((cdsdims.stop-cdsdims.aug ) / 3)[psitetrs]
-    #include flanks in this number
-    trcodons = trcodons + (2*NFLANK)
-    trcodons.name = 'n_cods'
-    trcodons.index.name = 'tr_id'
-    excesscodons = ((trcodons)-NTOKS).clip(0)
-    # trcodons = trcodons.reset_index()
-    excesscodons[tr]
-    trcodons[tr]
+        # firsthalfend = cdsdims.aug + np.ceil((trcodons/2)).clip(upper=256)
+        firsthalfend = np.ceil((trcodons/2)).clip(upper=NTOKS/2)-NFLANK#1based
+        # firsthalfend[tr]
+        sechalfstart = (trcodons-NFLANK) - np.floor((trcodons/2)).clip(upper=NTOKS/2)
+        # sechalfstart[tr]
 
+        #these two are the right size, it seems
+        # firsthalfend[tr] - (0-NFLANK)
+        # (trcodons[tr]-NFLANK)-sechalfstart[tr]
+        # (sechalfstart - firsthalfend)==excesscodons
 
+        sumpsites2 = sumpsites
 
-    # firsthalfend = cdsdims.aug + np.ceil((trcodons/2)).clip(upper=256)
-    firsthalfend = np.ceil((trcodons/2)).clip(upper=NTOKS/2)-NFLANK#1based
-    firsthalfend[tr]
-    sechalfstart = (trcodons-NFLANK) - np.floor((trcodons/2)).clip(upper=NTOKS/2)
-    sechalfstart[tr]
-
-    #these two are the right size, it seems
-    firsthalfend[tr] - (0-NFLANK)
-    (trcodons[tr]-NFLANK)-sechalfstart[tr]
-    (sechalfstart - firsthalfend)==excesscodons
-
-    #so this defines the middle region, in 0,1 index
-    middlestart=firsthalfend
-    middleend=sechalfstart
-
-    sumpsites2 = sumpsites
-
-    sumpsites2 = sumpsites2[sumpsites2.codon_idx<(trcodons[sumpsites2.tr_id]-NFLANK).values]
-    sumpsites2 = sumpsites2[sumpsites2.codon_idx>= -NFLANK]
-    inmiddle = (firsthalfend[sumpsites2.tr_id].values<=sumpsites2.codon_idx) & (sumpsites2.codon_idx < sechalfstart[sumpsites2.tr_id].values)
-    sumpsites2 = sumpsites2[~inmiddle]
-
-    assert (sumpsites2.groupby('tr_id').size()[trcodons.index] == trcodons.clip(upper=NTOKS)).all()
-
-    sumpsites = sumpsites2
-
-    ################################################################################
-    ########Now parse into tensors
-    ################################################################################
+        sumpsites2 = sumpsites2[sumpsites2.codon_idx<(trcodons[sumpsites2.tr_id]-NFLANK).values]
+        sumpsites2 = sumpsites2[sumpsites2.codon_idx>= -NFLANK]
+        inmiddle = (firsthalfend[sumpsites2.tr_id].values<=sumpsites2.codon_idx) & (sumpsites2.codon_idx < sechalfstart[sumpsites2.tr_id].values)
+        sumpsites2 = sumpsites2[~inmiddle]
     
+        assert (sumpsites2.groupby('tr_id').size()[trcodons.index] == trcodons.clip(upper=NTOKS)).all()
+
+        return sumpsites2
 
 
-    sumpsites2.groupby('tr_id').size().max()
-
-    sumpsites.merge(trcodons,).query('(codon_idx+1) <= (n_cods - NFLANK)')
-    sumpsites[sumpsites.tr_id==tr]
-
-
-    tr='YPR204C-A' 
-    trcodons[tr]
-    #this looks right, so that e.g. in a tr with 160 codons, codon_idx==159 is the last cododing codon, and 160 is the stop
-    coddf.query('codon_idx >= -3').query('tr_id=="YPR204C-A"').merge(trcodons).query('codon_idx < n_cods+3')
-
-
-
+    sumpsites = trim_middle(sumpsites)
+    
+    sumpsites.to_csv(args.o+'.sumpsites.csv',index=False)
+    print(args.o+'.sumpsites.csv')
 
 
 
