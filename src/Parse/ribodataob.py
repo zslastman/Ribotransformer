@@ -283,29 +283,38 @@ if False:
     plx.show()
 
 #we can also just fake rdata
+# rdata = oldrdata
 oldrdata = copy.deepcopy(rdata)
 
 fakerdata = copy.deepcopy(rdata)
 fcodstrengths = torch.cat([ten([0]),codstrengths])
 fsignal = (fcodstrengths.reshape([1,65,1])*fakerdata.data['codons']).sum(axis=1)
-fsignal.shape
 
 fsignal = fsignal*fakerdata.offset.reshape([-1,1])
+
+poseffects = fakerdata.ribosignal.mean(axis=0).reshape([1,-1])
+fsignal.shape
+poseffects.shape
+fsignal = fsignal*poseffects
 
 fakerdata.ribosignal=fsignal
 
 rdata=fakerdata
 
-s_codstrengths = pd.Series(codstrengths,index=pd.Series(rdata.codonnum.index,name='codon'),name='mydens')
-s_codstrengths = pd.DataFrame({'codon':rdata.codonnum.index,'mydens':codstrengths})
-wbergsupp=pd.read_csv('../cortexomics/ext_data/weinberg_etal_2016_S2.tsv',sep='\t')
-wbergsupp = wbergsupp[['Codon','RiboDensity at A-site']]
-wbergsupp.columns = ['codon','wberg_dens']
-dtcompdf = (rdata.codonnum.
-    reset_index().
-    rename(columns={'index':'codon',0:'num'}).
-    merge(wbergsupp).merge(s_codstrengths)
-)
+rdata.usedata = ['codons']
+train_data,test_data,val_data = split_data(rdata)
+
+if False:
+    s_codstrengths = pd.Series(codstrengths,index=pd.Series(rdata.codonnum.index,name='codon'),name='mydens')
+    s_codstrengths = pd.DataFrame({'codon':rdata.codonnum.index,'mydens':codstrengths})
+    wbergsupp=pd.read_csv('../cortexomics/ext_data/weinberg_etal_2016_S2.tsv',sep='\t')
+    wbergsupp = wbergsupp[['Codon','RiboDensity at A-site']]
+    wbergsupp.columns = ['codon','wberg_dens']
+    dtcompdf = (rdata.codonnum.
+        reset_index().
+        rename(columns={'index':'codon',0:'num'}).
+        merge(wbergsupp).merge(s_codstrengths)
+    )
 
 
 

@@ -23,13 +23,26 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 #ninp is the embedding dimension
-class Convmodel(nn.Module):
+class RiboModel(nn.Module):
+    def flipBatch(data, lengths):
+        assert data.shape[0] == len(lengths), "Dimension Mismatch!"
+        for i in range(data.shape[0]):
+            data[i,:lengths[i]] = data[i,:lengths[i]].flip(dims=[0])
+
+        return data
+
     def __init__(self, ninp, out, k, dropout=0.5):
-        super(Convmodel, self).__init__()
+        super(RiboModel, self).__init__()
 
         assert k%2 ==1
 
+        n_lstm=2
+
         self.conv = nn.Conv1d(ninp, out, k, padding=int(k/2))
+
+        self.lstm = nn.LSTM(ninp + 1, n_lstm, bidirectional=True)
+
+        self.convfinal = nn.Conv1d(n_lstm*2, 1, 1, padding=int(1/2))
 
         self.init_weights(ninp)
 
@@ -37,26 +50,38 @@ class Convmodel(nn.Module):
         initrange = 0.1/ninp
         self.conv.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, src):
-        src,offset = src
+    # src_offset = tdata
+    def forward(self, src_offset):
+        src,offset = src_offset
+
         output = self.conv(src)
+        
+        output = torch.cat([src,output],axis=1)
+
+        # output = src
+
+        output_lstm,hidden = self.lstm(output.permute([2,0,1]))
+        output_lstm = output_lstm.permute([1,2,0])
+
+        output = self.convfinal(output_lstm)
+
         output = output + offset.log()
         # output = output * offset
         return output.squeeze(1)
 
-rdata.batch_size=20
-rdata.usedata = ['codons']
+train_data.batch_size=100
+test_data.batch_size=100
+val_data.batch_size=100
 
 rdata.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-train_data,test_data,val_data = split_data(rdata)
 
 datadim = train_data.datadim()
 kernalsize=1
-cmodel = Convmodel(datadim, 1, kernalsize).to(rdata.device)
+cmodel = RiboModel(datadim, 1, kernalsize).to(rdata.device)
 
 #test the model
-assert rdata.datadim() is 65
-assert val_data.datadim() is 65
+# assert rdata.datadim() is 80
+# assert val_data.datadim() is 80
 tdata,ttarget=next(iter(train_data))
 toutput = cmodel(tdata)
 assert list(toutput.shape) ==[train_data.batch_size,512]
@@ -66,14 +91,22 @@ mseloss = nn.MSELoss(reduction='none')
 poisloss = nn.PoissonNLLLoss(log_input=True)
 poislossnr = nn.PoissonNLLLoss(log_input=True,reduction='none')
 
-# def regcriterion(x,y):
-    # return mseloss(x,y).mean()
+def mselossfun(x,y):
+    return mseloss(x,y)
 #x,y=output,target
-def regcriterion(x,y):
+def poisslossfun(x,y):
     eps = 1/y.mean(axis=1).reshape([-1,1])
     return poisloss(x,y+eps)
-    #poislossnr(x,y+eps)
+    # poislossnr(x,y+eps)
+regcriterion = mselossfun
+regcriterion = poisslossfun
 # ############
+
+test_data.batch_size=10000
+tdata,ttarget=next(iter(test_data))
+src_offset=tdata
+toutput = cmodel(tdata)
+regcriterion(toutput,ttarget)
 
 # tdata,ttarget=next(iter(train_data))
 # tdata,y=tdata,ttarget
@@ -117,7 +150,7 @@ def regcriterion(x,y):
 
 # ############
 
-lr = 0.05
+lr = 0.005
 print('learning rate: {:3f}'.format(lr))
 optimizer = torch.optim.SGD(cmodel.parameters(), lr=lr)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
@@ -144,23 +177,19 @@ def train():
         optimizer.step()
         #
         total_loss += loss.item()
+        cur_loss = loss.item()
         log_interval = 10
-        tweights = cmodel.conv.weight
-        tweights.abs().mean()
-        tweights.grad.abs().mean()
+
         # print('weights 0,64:'+'\n'+str(tweights[0,0,0])+'\n'+str(tweights[0,63,0]))
         if batch % log_interval == 0 and batch > 0:
-            cur_loss = total_loss / log_interval
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | '
                   'lr {:02.2f} | ms/batch {:5.2f} | '
-                  'loss {:5.2f} | ppl {:8.2f}'.format(
+                  'loss {:5.2f} '.format(
                     epoch, batch, len(train_data) // bptt, scheduler.get_lr()[0],
                     elapsed * 1000 / log_interval,
-                    cur_loss, cur_loss))
-            total_loss = 0
+                    cur_loss))
             start_time = time.time()
-
 ##
 epoch=1
 # train()
@@ -173,20 +202,21 @@ batch = next(iter(data_source))
 def evaluate(eval_model, data_source):
     eval_model.eval() # Turn on the evaluation mode
     total_loss = 0.
-
+    n=0
     with torch.no_grad():
         for i, batch in enumerate(data_source):
             edata, targets = batch
             output = eval_model(edata)
             # output_flat = output.view(-1, ntokens)
-            output_flat = output.flatten
-            total_loss += len(edata) * regcriterion(output, targets).item()
-    return total_loss / (len(data_source) - 1)
+            # output_flat = output.flatten
+            total_loss += regcriterion(output, targets).item()
+            n+=1
+    return total_loss / n
 
 
 best_val_loss = float("inf")
 best_model = None
-epochs=3
+epochs=10
 epoch=1
 
 print('training...')
@@ -198,8 +228,8 @@ for epoch in range(1, epochs + 1):
     val_loss = evaluate(cmodel, val_data)
     print('-' * 89)
     print('| start of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
-          'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
-                                     val_loss, val_loss))
+          ''.format(epoch, (time.time() - epoch_start_time),
+                                     val_loss))
     train()
     print('-' * 89)
 
@@ -229,6 +259,7 @@ fakedata = torch.cat([fakecoddata,otherdata],axis=1)
 
 #
 testoutput = cmodel((fakedata,tdata[1][0]))
+
 plx.clear_plot()
 plx.scatter(
         codstrengths.cpu().detach().numpy().flatten(),
@@ -236,9 +267,41 @@ plx.scatter(
         rows = 17, cols = 70)
 plx.show()
 
+################################################################################
+########Positional effect learned?
+################################################################################
+def txtplot(v):
+    if 'torch' in str(type(v)): v = v.detach().numpy()
+    ro.globalenv['rsignal'] =  v
+    r('library(txtplot);txtplot(rsignal)')
+    
+test_data.batch_size=1000
+valbatchdata = next(iter(test_data))[0]
+val_output_profile = cmodel(valbatchdata).mean(axis=0)
+
+valbatchdata[0].shape
+# val_output_profile.max()
+txtplot(val_output_profile)
+txtplot(val_output_profile[0:20])
+
+##also test if it understands the start and end of the cds
+valbatchdata[0][:,:,300:]=0
+valbatchdata[0][:,0,300:]=1
+
+val_output_profile_endalt = cmodel(valbatchdata).mean(axis=0)
+
+plx.clear_plot()
+plx.scatter(
+        range(len(val_output_profile)),
+        val_output_profile_endalt.detach().numpy(),
+        rows = 17, cols = 70)
+plx.show()
+
+
+#YESSS
+
 #what if I fake rdata to look the way I think it should?
 
-foo
 ################################################################################
 ########Is everything working right in a totally fake scenario?
 ################################################################################
