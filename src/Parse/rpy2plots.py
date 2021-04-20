@@ -39,7 +39,7 @@ with localconverter(ro.default_converter + pandas2ri.converter):
     pddf = pd.DataFrame({'a':[1,2],'b':[1,2]})
     rpy2.robjects.globalenv['mydf'] = pddf
     
-ro.globalenv['rsignal'] = np.array(rdata.ribosignal[0])
+ro.globalenv['rsignal'] =  rdata.ribosignal.sum(axis=0).numpy()
 r('library(txtplot);txtplot(rsignal)')
 
   # r_from_pd_df = ro.conversion.py2rpy(pd_df)
