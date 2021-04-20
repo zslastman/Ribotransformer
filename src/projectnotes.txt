@@ -10,3 +10,10 @@ objectives:
 
 
 #stuck on the autoencoder thing rn.
+
+
+
+Okay so dts calculated from my data look reasonably like weinbergs, including
+the 3 slowest codons.
+
+now I need to get it to learn a shape....

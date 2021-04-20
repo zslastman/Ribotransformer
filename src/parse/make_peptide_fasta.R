@@ -14,7 +14,7 @@ select <- dplyr::select
 
 args = R.utils::commandArgs(trailingOnly=TRUE,asValues=TRUE,defaults =list(
   fasta='pipeline/yeast_transcript.ext.fa',
-  outfile='yeast_transcript.ext.pep.fa'
+  outfile='pipeline/yeast_transcript.ext.pep.fa'
 ))
 
 # Turn arguments into R variables
