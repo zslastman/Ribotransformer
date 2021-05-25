@@ -12,17 +12,22 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         pe = torch.zeros(max_len, d_model)
+        #5000,200
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        #5000,1
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        #shape 100
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
+        #pe.shape==5000,1,200
         self.register_buffer('pe', pe)
 
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
 
+#ninp is the 
 class TransformerModel(nn.Module):
 
     def __init__(self, ntoken, ninp, nhead, nhid, nlayers, dropout=0.5):
@@ -35,7 +40,6 @@ class TransformerModel(nn.Module):
         self.encoder = nn.Embedding(ntoken, ninp)
         self.ninp = ninp
         self.decoder = nn.Linear(ninp, ntoken)
-
         self.init_weights()
 
     def generate_square_subsequent_mask(self, sz):
@@ -43,17 +47,29 @@ class TransformerModel(nn.Module):
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def init_weights(self):
-        initrange = 0.1
-        self.encoder.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(-initrange, initrange)
+    # def init_weights(self):
+    #     initrange = 0.1
+    #     self.encoder.weight.data.uniform_(-initrange, initrange)
+    #     self.decoder.bias.data.zero_()
+    #     self.decoder.weight.data.uniform_(-initrange, initrange)
 
+    src,self=data,model
     def forward(self, src, src_mask):
+        assert list(src.shape) == [35,20]
+        #we are encoding the 35 integers in each sample into 35 n_200 vectors
+        #(rather than the 28k sparse vector we'd otherwise need)
         src = self.encoder(src) * math.sqrt(self.ninp)
+        assert list(src.shape) == [35,20,200]
+        #src.shape
+        src_nopos = src.detach().numpy()
         src = self.pos_encoder(src)
+        src.detach().numpy()==src_nopos
+        src.detach().numpy() - src_nopos
+        src.shape
         output = self.transformer_encoder(src, src_mask)
+        # output.shape = [35,20,200]
         output = self.decoder(output)
+        # output.shape = [35,20,200]
         return output
 
 
@@ -91,9 +107,13 @@ def get_batch(source, i):
     target = source[i+1:i+1+seq_len].reshape(-1)
     return data, target
 
+#28k
 ntokens = len(TEXT.vocab.stoi) # the size of vocabulary
+#dense space 
 emsize = 200 # embedding dimension
+#
 nhid = 200 # the dimension of the feedforward network model in nn.TransformerEncoder
+#
 nlayers = 2 # the number of nn.TransformerEncoderLayer in nn.TransformerEncoder
 nhead = 2 # the number of heads in the multiheadattention models
 dropout = 0.2 # the dropout value
@@ -104,6 +124,7 @@ lr = 5.0 # learning rate
 optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
 
+batch, i = next(enumerate(range(0, train_data.size(0) - 1, bptt)))
 
 import time
 def train():

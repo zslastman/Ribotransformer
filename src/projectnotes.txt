@@ -16,4 +16,7 @@ objectives:
 Okay so dts calculated from my data look reasonably like weinbergs, including
 the 3 slowest codons.
 
-now I need to get it to learn a shape....
+I think it's just learning a uniform distribution... So does it still do this with fake data? And is that actually the optimal solution? yes it stil seems to just learn a uniform distribution. Offsets were wrong in fake data, fix
+Okay 
+
+eventually  I need to get it to learn a shape....

@@ -1,3 +1,10 @@
+%run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/0_0_rpy2plots.py"
+%run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/Parse/1_ribodataob.py"
+# %run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/Parse/2_load_esm.py"
+# %run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/Model/3b_convmodel_normdata.py"
+# %run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/Sketches/transformer_sketch.py"
+%run -i "/fast/work/groups/ag_ohler/dharnet_m/Ribotransformer/src/Model/4_transformernormdata.py"
+	
 run -i "src/fake_codon_data.py"
 lr = 0.05 # learning rate
 epochs = 5 # The number of epochs

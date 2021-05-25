@@ -13,7 +13,6 @@ import random
 import ipdb
 import time
 
-ten = torch.Tensor
 print_batch_loss = False
 
 # original code from.https://pytorch.org/tutorials/beginner/transformer_tutorial.html
@@ -22,6 +21,10 @@ print('defining...')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+datatouse = ['codons']
+train_data.usedata=datatouse
+val_data.usedata=datatouse
+test_data.usedata=datatouse
 
 #ninp is the embedding dimension
 class Convmodel(nn.Module):
@@ -30,9 +33,10 @@ class Convmodel(nn.Module):
 
         assert k%2 ==1
 
-        self.conv = nn.Conv1d(ninp, out, k, padding=int(k/2))
+        self.conv = nn.Conv1d(ninp, out, k, padding=int(k/2), bias=False)
 
         self.init_weights(ninp)
+
 
     def init_weights(self,ninp):
         initrange = 0.1/ninp
@@ -42,6 +46,7 @@ class Convmodel(nn.Module):
         src,offset = src
         output = self.conv(src)
         output = output + offset.log()
+        output[src[:,0:1,:]==1]=0
         # output = output * offset
         return output.squeeze(1)
 
@@ -53,28 +58,30 @@ kernalsize=1
 cmodel = Convmodel(datadim, 1, kernalsize).to(rdata.device)
 
 #test the model
-assert rdata.datadim() is 65
-assert val_data.datadim() is 65
+# assert train_data.usedata == ['codons','esm']j
+# assert train_data.datadim() == 65+1280
+# assert val_data.datadim() == 65+1280
+
 tdata,ttarget=next(iter(train_data))
 toutput = cmodel(tdata)
 assert list(toutput.shape) ==[train_data.batch_size,512]
 assert list((toutput - ttarget).shape)==[train_data.batch_size,512]
-
+#
 mseloss = nn.MSELoss(reduction='none')
 poisloss = nn.PoissonNLLLoss(log_input=True)
 poislossnr = nn.PoissonNLLLoss(log_input=True,reduction='none')
-
+#
 def mseregcriterion(x,y):
     return mseloss(x,y).mean()
 # #x,y=output,target
 regcriterion=mseregcriterion
 def pregcriterion(x,y):
-    eps = 1/y.mean(axis=1).reshape([-1,1])
-    y=y+eps
+    # eps = 1/y.mean(axis=1).reshape([-1,1])
+    # y=y+eps
     return poisloss(x,y)
     #poislossnr(x,y+eps)
 regcriterion=pregcriterion
-def nbregcriterion(x,y,psi=10,eps=1e-8):
+def nbregcriterion(x,y,psi=1.6,eps=1e-8):
     #torch.logsumexp
     #https://github.com/sqsun/scNBMF/blob/84f9068882305adccecaa5754805066595edc819/scNBMF.R
     # LL <- tf$reduce_sum(y_ * tf$log(mu_ + eps) - (y_ + psi_) * tf$log(mu_ + psi_ + eps)) 
@@ -82,14 +89,60 @@ def nbregcriterion(x,y,psi=10,eps=1e-8):
     LL = y*(x+eps).log() - (y + psi) * (x+psi+eps).log()
     LL = LL.mean()
     return - LL
-# regcriterion=nbregcriterion
-# ############
+regcriterion=nbregcriterion
 
-tdata,ttarget=next(iter(train_data))
-tdata,y=tdata,ttarget
-x=cmodel(tdata)
-eps = 1/y.mean(axis=1).reshape([-1,1])
-testloss = regcriterion(x,ttarget)
+################################################################################
+########Debug
+################################################################################
+    
+# ############
+# #crap, look how asymettric the poisson loss ufnction is
+# #y=ten([4,3,2,1,1,1,7]); x=ten([y.mean()]*len(y));txtplot(ten([pregcriterion(x+i,y) for i in range(-2,2,1)]))
+
+# #actually with log taken into accounts it's nto that bad
+# y=ten([4,3,2,1,1,1,7]); x=ten([y.mean().log()]*len(y));txtplot(ten([nbregcriterion(x+i,y,psi=1.6) for i in np.arange(-2,3,1)]))
+# y=ten([4,3,2,1,1,1,7]); x=ten([y.mean().log()]*len(y));txtplot(ten([pregcriterion(x+i,y) for i in np.arange(-2,3,1)]))
+# tdata,ttarget=next(iter(train_data))
+# tdata,y=tdata,ttarget
+# tdata[0][:,0,:].sum(axis=1)
+
+# x=cmodel(tdata)
+# testloss = regcriterion(x,ttarget)
+# print('testloss: {}'.format(testloss))
+
+# #
+# #okay so lowering the null codon gets you a big improvement
+# cmodel.conv.weight[:,0,:]= -3
+# x2=cmodel(tdata)
+# testloss2 = regcriterion(x,ttarget)
+# print('testloss after weights set: {}'.format(testloss2))
+# print('Difference (should be positive): {}'.format(testloss-testloss2))
+
+# x[tdata[0][:,0,:]==1]
+# x2[tdata[0][:,0,:]==1]
+
+
+# #
+# cmodel.conv.weight[:,1:,:]=codstrengths.log().reshape([1,-1,1])
+# x=cmodel(tdata)
+# testloss2 = regcriterion(x,ttarget)
+# print('testloss after weights set: {}'.format(testloss2))
+
+# poislossnr(x,ttarget)
+
+# cmodel.train()
+# testloss.backward()
+# optimizer.step()
+
+# txtplot(cmodel.conv.weight.grad)
+# txtplot(a=cmodel.conv.weight)
+# txtdensity(cmodel.conv.weight)
+# highgradtoken = cmodel.conv.weight.grad.argmax()
+# htokdata = tdata[0][:,highgradtoken,:]
+# txtplot(ttarget[htokdata!=0])
+# txtdensity(tdata[0][:,highgradtoken+0,:])
+
+# train()
 
 # poisloss(ten([9]).log(),ten([10]))
 # nblosarray = np.array([nbregcriterion(ten([i]).log(),ten([10]),psi=0.01) for i in range(6,15)])
@@ -140,12 +193,20 @@ testloss = regcriterion(x,ttarget)
 
 # #true
 
-#specific instance where loss is infinite(and generally just really high)
+# specific instance where loss is infinite(and generally just really high)
 
-# ############
+# # ############
 
-if regcriterion is pregcriterion: lr = 0.0005
-if regcriterion is nbregcriterion: lr = 0.005
+
+
+lr=1
+if regcriterion is pregcriterion: 
+    if 'esm' in datatouse:
+        lr = 0.000001
+    else:
+        lr = 0.00001
+if regcriterion is nbregcriterion: lr = 0.00000005
+
 print('learning rate: {:3f}'.format(lr))
 optimizer = torch.optim.SGD(cmodel.parameters(), lr=lr)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.9)
@@ -159,7 +220,8 @@ def train():
     start_time = time.time()
     bptt = train_data.batch_size
 
-    for batch, batchdata in enumerate(train_data):
+    # for batch, batchdata in enumerate(train_data):
+    for batch in range(0,20):
 
         data,target = batchdata
         optimizer.zero_grad()
@@ -169,14 +231,18 @@ def train():
         if torch.isnan(loss): ipdb.set_trace()
         loss.backward()
         # torch.nn.utils.clip_grad_norm_(cmodel.parameters(), 0.5)
+        weightsold=cmodel.conv.weight.detach().numpy().copy()
         optimizer.step()
         #
         total_loss += loss.item()
         log_interval = 10
-        tweights = cmodel.conv.weight
-        tweights.abs().mean()
-        # print('weights 0,64:'+'\n'+str(tweights[0,0,0])+'\n'+str(tweights[0,63,0]))
+        tweights = cmodel.conv.weight.detach().numpy()
+        tgrad = cmodel.conv.weight.grad
+        tchange = tweights - weightsold
         if batch % log_interval == 0 and batch > 0:
+            # print('weights 0,2:'+'\n'+str(tweights[0,0,0])+'\n'+str(tweights[0,3,0]))
+            # print('grads 0,3:'+'\n'+str(tgrad[0,0,0])+'\n'+str(tgrad[0,3,0]))
+            # print('change 0,3:'+'\n'+str(tchange[0,0,0])+'\n'+str(tchange[0,3,0]))
             # print(tweights.grad.abs().mean())
             cur_loss = total_loss / log_interval
             elapsed = time.time() - start_time
@@ -191,7 +257,7 @@ def train():
 
 ##
 epoch=1
-# train()
+train()
 
 eval_model=cmodel
 data_source=val_data
@@ -256,21 +322,21 @@ fakedata = torch.cat([fakecoddata,otherdata],axis=1)
 if regcriterion is mseregcriterion:
     testoutput = cmodel((fakedata,tdata[1][0]))
     print('mse loss')
-    plx.clear_plot()
-    plx.scatter(
-            codstrengths.cpu().detach().numpy().flatten(),
-            testoutput.exp().cpu().detach().numpy().flatten()[1:],
-            rows = 17, cols = 70)
-    plx.show()
+    txtplot(codstrengths,testoutput[:,1:])
 else:
     print('poisson loss')
-    # testoutput = cmodel((fakedata,tdata[1][0]))
-    plx.clear_plot()
-    plx.scatter(
-            cmodel.conv.weight.detach().numpy().flatten()[1:],
-            testoutput.cpu().detach().numpy().flatten()[1:],
-            rows = 17, cols = 70)
-    plx.show()
+    testoutput = cmodel((fakedata,tdata[1][0]))
+    txtplot(codstrengths,testoutput[:,1:].exp())
+
+tdata,ttarget=next(iter(test_data))
+toutput = cmodel(tdata)
+
+txtplot(toutput[0])
+
+tdata[0]
+
+
+
 
 #what if I fake rdata to look the way I think it should?
 
