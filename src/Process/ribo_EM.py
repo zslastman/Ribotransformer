@@ -5,18 +5,53 @@ import sklearn
 import numpy as np
 import numpy
 import pandas as pd
-import_folder = '/fast/work/groups/ag_ohler/dharnet_m/cortexomics/src/python/'
-sys.path = [import_folder]+list(set(sys.path)-set(import_folder)) # this tells python to look in `import_folder` for imports
+# import_folder = '/fast/work/groups/ag_ohler/dharnet_m/cortexomics/src/python/'
+# sys.path = [import_folder]+list(set(sys.path)-set(import_folder)) # this tells python to look in `import_folder` for imports
 from scipy.sparse import find
 from scipy.sparse import csr_matrix
+from scipy.sparse import csc_matrix
 from scipy.sparse.csgraph import connected_components
 from sklearn.preprocessing import normalize
 from sklearn.preprocessing import LabelEncoder
-import arraychoose
+# import arraychoose
+
+
+# def sparse_choosecols(spmat):
+# 	sptmatnorm = normalize(spmat,axis=1,norm='l1')
+# 	spcols, sprows, spvals = find(sptmatnorm.transpose())
+# 	return arraychoose.choose_colssp(sprows, spcols, spvals)
+
+
+
 def sparse_choosecols(spmat):
-	sptmatnorm = normalize(spmat,axis=1,norm='l1')
-	spcols, sprows, spvals = find(sptmatnorm.transpose())
-	return arraychoose.choose_colssp(sprows, spcols, spvals)
+	spmat =  normalize(spmat,axis=1,norm='l1')
+	spmat_t = spmat.transpose()
+	vals = find(spmat_t)[2]
+	valscsum = np.cumsum(vals)
+	spmat_t[spmat_t!=0]
+	spmat[spmat!=0] = valscsum
+	#spmat.todense()#looks right
+	offset_csmax = np.concatenate([np.array(0).reshape([1,1]),spmat.max(axis=1).todense()])[:-1]
+	fres = find(spmat)	
+	#now get the (col ordered!) cumsum values, per row
+	rowcsvals = (fres[2] - offset_csmax[fres[0]].reshape(-1))
+	#everything greater than the float is on the menu
+	rowchoicefloats = np.random.random([1+fres[0].max()])[fres[0]]
+	# rowcsvals[rowcsvals > rowchoicefloats]
+	#and finally stick these into our matrix to make everythng above the float 1
+	spmat_t[spmat_t!=0] = (rowcsvals > rowchoicefloats)*1
+	#spmat_t.todense()
+	#now get the first index above 1 for each column (row of original)
+	colchoices = np.array(spmat_t.argmax(axis=0).reshape([spmat.shape[0]])).flatten()
+	assert colchoices.shape == (spmat.shape[0],)
+	# colchoices
+	return colchoices
+# spmat = csc_matrix(np.array([[0,0,0,0.5,0,0,0.5],[0,0.5,0,0,0.5,0,0],[0.2,0,0.5,0,0,0,4]]))
+# sparse_choosecols(spmat)
+
+#generate a random number between 0 and 1 for each row
+#take the first col for each row that's more than this number
+#
 
 
 def readcount2TPM(transcript_readcount, transcript_CDS_len):
