@@ -1,7 +1,17 @@
-################################################################################
-########Let's replicate their perceptron, see if I can pytorch something almost
-########as good
-################################################################################
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import random
+import ipdb
+import time
+import scipy
+from scipy import stats
+
+# #############################################################################
+# #######Let's replicate their perceptron, see if I can pytorch something
+# #######as good
+# #############################################################################
 ten=torch.Tensor
 
 class Net(nn.Module):
@@ -53,9 +63,9 @@ print('mine vs actual:')
 print(stats.pearsonr(nstruct_samewout.detach().numpy().flatten(),y_tr.flatten()))
 #okay that makes it quite a lot worse
 
-################################################################################
+###############################################################################
 ########Now let's see if I can train one that's as good
-################################################################################
+###############################################################################
 
 class Dataset(torch.utils.data.Dataset):
   'Characterizes a dataset for PyTorch'
@@ -139,11 +149,12 @@ cdsdims['n_cod'] = (cdsdims.stop - cdsdims.aug)/3
 #a bit...
 
 
-################################################################################
+###############################################################################
 ########Let's try it with my own generated data (hopefully teh same)
-################################################################################
-if True:
-    trainset = Dataset(torch.Tensor(1.0*my_X_tr_s[:,:]),torch.Tensor(my_y_tr.reshape(-1,1)))
+###############################################################################
+def train_on_ixdata(ixdataset):
+
+    trainset = Dataset(torch.Tensor(1.0*ixdataset.X_tr[:,:]),torch.Tensor(ixdataset.y_tr.resha(-1,1)))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=500,
                                               shuffle=True, num_workers=1)
     i,data = next(enumerate(trainloader,0))
@@ -155,5 +166,4 @@ if True:
     # [lrlambda(i) for i in range(0,3)]
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lrlambda)
     #
-    train(trainloader,net,criterion,optimizer,my_X_te_s[:,:],my_y_te)
-
+    train(trainloader,net,criterion,optimizer,ixdataset.X_te[:,:],ixdataset.te)

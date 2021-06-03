@@ -1,26 +1,6 @@
-import argparse
-import pandas as pd
-from pathlib import Path
-
-
-if __name__ == '__main__':
-   
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-i",
-        help="Input dataframe with read counts per codon",
-        # default="pipeline/weinberg_yeast_riboAligned.out.sort.bam"
-        default=f'cortexomicstest.all.psites.csv'
-    )
-  
-    args = parser.parse_args()
-
-    df_file: Path = Path(args.i)
-    df: pd.DataFrame = pd.read_csv(df_file, sep='\t')
-
-###############################################################################
+################################################################################
 ########
-###############################################################################
+################################################################################
 
 allpsites = pd.read_csv(f'ribotranstest.all.psites.csv')
 ixnostr_trs = pd.read_csv('/fast/AG_Ohler/dharnet/Ribotransformer/iXnos/expts/weinberg/process/tr_set_bounds.size.27.31.trunc.20.20.min_cts.200.min_cod.100.top.500.txt',
