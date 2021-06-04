@@ -34,10 +34,55 @@ class Cdsannotation:
             else:
                 self.exonseq[transID] += line.strip()
         self.trlength: pd.Series = pd.Series(
-            dict([(s, len(cdsanno.exonseq[s])) for s in cdsanno.exonseq]))
+            dict([(s, len(self.exonseq[s])) for s in self.exonseq]))
+
+        self.cdsdims: pd.DataFrame = pd.DataFrame(
+            pd.concat(
+                [
+                    pd.Series(cdsanno.transcript_cdsstart),
+                    pd.Series(cdsanno.transcript_cdsend) + 1,
+                    cdsanno.trlength],
+                axis=1)
+        )
+        self.cdsdims.columns = ['aug', 'stop', 'length']
 
         f_ref.close()
+
+    def get_coddf(self, trstouse=None, lenfilt=0):
+        if trstouse is None:
+            trlens = self.trlength
+            trlens = trlens[(trlens // 3) > lenfilt]
+            trstouse = trlens.index
+
+        coddfs = []
+        # def tcode():
+        for tr in trstouse:
+            start = self.transcript_cdsstart[tr]
+            end = self.transcript_cdsend[tr]
+            futrcodpos = range(start - 3, -1, -3)
+            futrcodpos = list(reversed(futrcodpos))
+            cdscodpos = list(
+                range(start, end, 3))
+            tputrcodpos = list(range(end + 1, self.trlength[tr] - 2, 3))
+            codstarts = futrcodpos + cdscodpos + tputrcodpos
+            codidx = list(reversed(range(-1, -len(futrcodpos) - 1, -1)))
+            codidx += list(range(0, len(cdscodpos)))
+            codidx += list(range(
+                len(cdscodpos),
+                len(cdscodpos) + len(tputrcodpos)
+            ))
+            cods = wrap(self.exonseq[tr][codstarts[0]:codstarts[-1] + 3], 3)
+            coddf = pd.DataFrame(zip(codstarts, codidx, cods))
+            coddf.columns = ['start', 'codon_idx', 'codon']
+            coddf['end'] = coddf['start'] + 3
+            coddf['tr_id'] = tr
+            coddfs.append(coddf)
+
+        # %prun -l 10 tcode()
+        coddf = pd.concat(coddfs, axis=0)
         #
+        #
+        return coddf
 
 
 def make_bamDF(
@@ -47,14 +92,15 @@ def make_bamDF(
 
     # create a template/header from the input bam file
     inBam = pysam.AlignmentFile(bam, "rb")
-    # read a bam file and extract info
+    # read a bam file and extract infoG
     # cigar_to_exclude = set([1,2,3,4,5]) #set(['I','D','S','H'])
     cigar_to_exclude = set([1, 2, 3, 4, 5])  # set(['I','D','S','H'])
     i = 0
     readdf = []
     for read in inBam.fetch():
         i += 1
-        # if(i==10000):break
+        # if(i == 50000):
+        # break
         cigars = set([c[0] for c in read.cigartuples])
         if read.mapping_quality > mapq and \
                 minRL <= read.query_length <= maxRL and \
@@ -142,39 +188,6 @@ def makePredTraining(bamdf):
     return training
 
 
-def get_coddf(trstouse, cdsanno):
-    coddfs = []
-    # def tcode():
-    for tr in trstouse:
-        start = cdsanno.transcript_cdsstart[tr]
-        ends = cdsanno.transcript_cdsend[tr]
-        futrcodpos = range(start - 3, -1, -3)
-        futrcodpos = list(reversed(futrcodpos))
-        cdscodpos = list(
-            range(start, ends, 3))
-        tputrcodpos = list(range(ends + 1, cdsanno.trlength[tr] - 2, 3))
-        codstarts = futrcodpos + cdscodpos + tputrcodpos
-        codidx = list(reversed(range(-1, -len(futrcodpos) - 1, -1)))
-        codidx += list(range(0, len(cdscodpos)))
-        codidx += list(range(
-            len(cdscodpos),
-            len(cdscodpos) + len(tputrcodpos)
-        ))
-        cods = wrap(cdsanno.exonseq[tr][codstarts[0]:codstarts[-1] + 3], 3)
-        coddf = pd.DataFrame(zip(codstarts, codidx, cods))
-        coddf.columns = ['start', 'codon_idx', 'codon']
-        coddf['end'] = coddf['start'] + 3
-        coddf['tr_id'] = tr
-        coddfs.append(coddf)
-
-    # %prun -l 10 tcode()
-    coddf = pd.concat(coddfs, axis=0)
-    #
-    #
-    return coddf
-
-
-""
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -231,7 +244,7 @@ if __name__ == '__main__':
     sampreads, transcript_TPMs, TPM_diff, transcript_readcount = ribo_EM(
         bamdf[['read_name', 'tr_id']],
         cdsanno.transcript_CDS_len,
-        numloops=200,
+        numloops=50,
         verbose=args.verbose
     )
 
@@ -397,7 +410,7 @@ if __name__ == '__main__':
         to_series()
     )
     #
-    coddf = get_coddf(trstouse, cdsanno)
+    coddf = cdsanno.get_coddf(trstouse)
 
     sampreadssamp = sampreads
 

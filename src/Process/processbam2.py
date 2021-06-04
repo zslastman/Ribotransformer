@@ -37,7 +37,37 @@ class Cdsannotation:
             dict([(s, len(self.exonseq[s])) for s in self.exonseq]))
 
         f_ref.close()
+
+    def get_coddf(self, trstouse):
+        coddfs = []
+        # def tcode():
+        for tr in trstouse:
+            start = self.transcript_cdsstart[tr]
+            ends = self.transcript_cdsend[tr]
+            futrcodpos = range(start - 3, -1, -3)
+            futrcodpos = list(reversed(futrcodpos))
+            cdscodpos = list(
+                range(start, ends, 3))
+            tputrcodpos = list(range(ends + 1, self.trlength[tr] - 2, 3))
+            codstarts = futrcodpos + cdscodpos + tputrcodpos
+            codidx = list(reversed(range(-1, -len(futrcodpos) - 1, -1)))
+            codidx += list(range(0, len(cdscodpos)))
+            codidx += list(range(
+                len(cdscodpos),
+                len(cdscodpos) + len(tputrcodpos)
+            ))
+            cods = wrap(self.exonseq[tr][codstarts[0]:codstarts[-1] + 3], 3)
+            coddf = pd.DataFrame(zip(codstarts, codidx, cods))
+            coddf.columns = ['start', 'codon_idx', 'codon']
+            coddf['end'] = coddf['start'] + 3
+            coddf['tr_id'] = tr
+            coddfs.append(coddf)
+
+        # %prun -l 10 tcode()
+        coddf = pd.concat(coddfs, axis=0)
         #
+        #
+        return coddf
 
 
 def make_bamDF(
@@ -55,7 +85,7 @@ def make_bamDF(
     for read in inBam.fetch():
         i += 1
         # if(i == 50000):
-            # break
+        # break
         cigars = set([c[0] for c in read.cigartuples])
         if read.mapping_quality > mapq and \
                 minRL <= read.query_length <= maxRL and \
@@ -143,39 +173,6 @@ def makePredTraining(bamdf):
     return training
 
 
-def get_coddf(trstouse, cdsanno):
-    coddfs = []
-    # def tcode():
-    for tr in trstouse:
-        start = cdsanno.transcript_cdsstart[tr]
-        ends = cdsanno.transcript_cdsend[tr]
-        futrcodpos = range(start - 3, -1, -3)
-        futrcodpos = list(reversed(futrcodpos))
-        cdscodpos = list(
-            range(start, ends, 3))
-        tputrcodpos = list(range(ends + 1, cdsanno.trlength[tr] - 2, 3))
-        codstarts = futrcodpos + cdscodpos + tputrcodpos
-        codidx = list(reversed(range(-1, -len(futrcodpos) - 1, -1)))
-        codidx += list(range(0, len(cdscodpos)))
-        codidx += list(range(
-            len(cdscodpos),
-            len(cdscodpos) + len(tputrcodpos)
-        ))
-        cods = wrap(cdsanno.exonseq[tr][codstarts[0]:codstarts[-1] + 3], 3)
-        coddf = pd.DataFrame(zip(codstarts, codidx, cods))
-        coddf.columns = ['start', 'codon_idx', 'codon']
-        coddf['end'] = coddf['start'] + 3
-        coddf['tr_id'] = tr
-        coddfs.append(coddf)
-
-    # %prun -l 10 tcode()
-    coddf = pd.concat(coddfs, axis=0)
-    #
-    #
-    return coddf
-
-
-""
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -398,7 +395,7 @@ if __name__ == '__main__':
         to_series()
     )
     #
-    coddf = get_coddf(trstouse, cdsanno)
+    coddf = cdsanno.get_coddf(trstouse)
 
     sampreadssamp = sampreads
 

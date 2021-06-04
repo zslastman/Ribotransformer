@@ -83,7 +83,8 @@ class Ixnosdata:
                  fptrim: int = 20, tptrim: int = 20, fwidth: int = 5,
                  countmeanthresh: int = None,
                  top_n_thresh: int = 500,
-                 get_energy: bool = False):
+                 get_energy: bool = False,
+                 countfilt: bool = True):
         cdsdims['n_cod'] = (cdsdims['stop'] - cdsdims['aug']) / 3
         cdsdims = cdsdims.loc[(cdsdims['n_cod'] % 1 == 0)]
         cdsdims = cdsdims.loc[cdsdims['n_cod'] > (fptrim + tptrim)]
@@ -93,12 +94,15 @@ class Ixnosdata:
             query('codon_idx <= (n_cod-(@tptrim-@fwidth+1))')
         )
         trcounts = self.df.groupby('tr_id')['ribosome_count'].mean()
-        if top_n_thresh is not None:
-            trcounts = trcounts[trcounts != 0]
-            alltrs = (trcounts.sort_values(ascending=False).
-                      head(top_n_thresh).index.values)
+        if countfilt:
+            if top_n_thresh is not None:
+                trcounts = trcounts[trcounts != 0]
+                alltrs = (trcounts.sort_values(ascending=False).
+                          head(top_n_thresh).index.values)
+            else:
+                alltrs = trcounts[trcounts > countmeanthresh].index
         else:
-            alltrs = trcounts[trcounts > countmeanthresh].index
+            alltrs = self.df.tr_id.unique()
         traintrs = np.random.choice(alltrs, int(len(alltrs) * 0.75))
         testrs = np.array(list(set(alltrs) - set(traintrs)))
         #
@@ -182,7 +186,6 @@ if __name__ == '__main__':
         default=f'cortexomicstest.cdsdims.csv'
     )
     args = parser.parse_args()
-    print(args)
 
     df_file: Path = Path(args.i)
     cdsdims_file: Path = Path(args.c)

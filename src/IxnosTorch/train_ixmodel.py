@@ -2,8 +2,7 @@ import torch
 import ipdb  # ignore
 import sys
 import argparse
-import copy
-import ixnosdata
+from ixnosdata import Ixnosdata
 from pathlib import Path
 from typing import List
 from scipy import stats
@@ -17,6 +16,7 @@ import collections
 ipdb
 
 class Net(nn.Module):
+
     def __init__(self, n_feats, n_hid, finalmodelweights=None):
         super(Net, self).__init__()
         self.h1 = nn.Linear(n_feats, n_hid)  # 5*5 from image dimension
@@ -37,6 +37,14 @@ class Net(nn.Module):
         hidden = torch.tanh(self.h1(x))
         out = F.relu(self.out(hidden))
         return out
+
+    @classmethod
+    def from_state_dict(cls, state_dict):
+        n_feats = state_dict['h1.weight'].shape[1]
+        n_hid = state_dict['h1.weight'].shape[0]
+        net = Net(n_feats, n_hid)
+        net.load_state_dict(state_dict)
+        return(net)
 
 
 # ##############################################################################
@@ -79,17 +87,20 @@ class Trainres:
     bestcor: float = -1
     testcors: List[float] = field(default_factory=list)
 
-    def saveastuple(self):
-        obtuple = (trainres.beststate,
-        trainres.trainloss,
-        trainres.testloss,
-        trainres.bestloss,
-        trainres.bestcor,
-        trainres.testcors)
+    def saveastuple(self, filename):
+        obtuple = (self.beststate,
+                   self.trainloss,
+                   self.testloss,
+                   self.bestloss,
+                   self.bestcor,
+                   self.testcors)
+        torch.save(obtuple, filename)
+
 
 def train(trainloader, net, criterion, optimizer,
           scheduler, n_feats, X_te, y_te, epochs=55):
     trainres = Trainres()
+    print('\n')
     for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
         net.train()
@@ -156,8 +167,6 @@ def train_on_ixdata(ixdataset, epochs=55):
         n_feats, ixdataset.X_te[:, :].float(),
         ixdataset.y_te.float(), epochs=epochs)
     #
-    net.load_state_dict(trainres.beststate)
-    trainres.model = net
     return trainres
 
 
@@ -193,8 +202,8 @@ if __name__ == '__main__':
     df: pd.DataFrame = pd.read_csv(df_file)
     cdsdims: pd.DataFrame = pd.read_csv(cdsdims_file)
     # df = df.loc[]
-    ixdataset = ixnosdata.Ixnosdata(df, cdsdims)
-    trainres = train_on_ixdata(ixdataset, epochs=3)
+    ixdataset = Ixnosdata(df, cdsdims)
+    trainres = train_on_ixdata(ixdataset, epochs=55)
     #
-    torch.save(trainres.model, f'{args.o}.bestmodel.pt')
+    torch.save(vars(trainres), f'{args.o}.bestmodel.pt')
     torch.load(f'{args.o}.bestmodel.pt')

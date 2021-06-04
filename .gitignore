@@ -1,0 +1,9 @@
+data
+pipeline
+.RData
+.Rhistory
+*.idea*
+ext_data
+Applications
+*__pycache__*
+iXnos
