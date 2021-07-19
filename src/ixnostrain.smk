@@ -1,47 +1,60 @@
 import pandas as pd
 
-bamfiles = pd.read_csv('bamlist.tsv', sep='\t').bamfile
-bamfiles = bamfiles
+config['bamlist']
+if config.get('bamlist') is None:
+	bamlist = config['bamlist']
+	bamfiles = pd.read_csv(bamlist, sep='\t').bamfile
+else:
+	bamlist = config['bamlist']
+	bamfiles = pd.Series(bamlist)
+
 samples = list(bamfiles.index)
 
 # import ipdb; ipdb.set_trace()
 offsetops={}
 fafiles={}
+offsetops.update(config['offsetops'])
+fafiles.update(config['fafiles'])
+
 for sample in samples:
 	bam = bamfiles[sample]
 	if 'cortexomics' in bam:
 		offsetops[sample]=' -l ../../cortexomics/ext_data/offsets_manual.tsv'
 		fafiles[sample]='../../cortexomics/ext_data/gencode.vM12.pc_transcripts.fa'
+	assert fafiles[sample]
+	assert bamfiles[sample]
+
 
 rule all:
 	input:
-		expand('ixnosmodels/{sample}/{sample}', sample=samples)
+		expand('ixnosmodels/{sample}/{sample}', sample=samples),
+		expand('ixnos_elong/{sample}/{sample}', sample=samples)
 
 rule get_read_df:
     input: bamfile = lambda wc: bamfiles[wc.sample], fafile = lambda wc: fafiles[wc.sample]
-    params: offset = lambda wc: offsetops[wc.sample]
+    params: offset = lambda wc: ' -l '+offsetops[wc.sample]  if offsetops[wc.sample] else '' 
     output: 
     	touch('ribotransdata/{sample}/{sample}'),
     	'ribotransdata/{sample}/{sample}.all.psites.csv',
     	'ribotransdata/{sample}/{sample}.cdsdims.csv'
     shell: r'''
-	python ../src/IxnosTorch/processbam2.py -i {input.bamfile} -f {input.fafile} {params.offset} -o {output[0]}
+	python /fast/AG_Ohler/dharnet/Ribotransformer/src/IxnosTorch/processbam.py -i {input.bamfile} -f {input.fafile} {params.offset} -o {output[0]}
 	'''
 
 rule train_ixmodel:
     input:
         readdata = 'ribotransdata/{sample}/{sample}.all.psites.csv',
         cdsdims = 'ribotransdata/{sample}/{sample}.cdsdims.csv'
-    output: touch('ixnosmodels/{sample}/{sample}')
+    output: touch('ixnosmodels/{sample}/{sample}'),'ixnosmodels/{sample}/{sample}.bestmodel.pt'
     shell: r'''
-	python ../src/IxnosTorch/train_ixmodel.py -i {input.readdata} -c {input.cdsdims} -o {output}
+	python /fast/AG_Ohler/dharnet/Ribotransformer/src/IxnosTorch/train_ixmodel.py -i {input.readdata} -c {input.cdsdims} -o {output[0]}
 	'''
 
 rule ixnos_elong:
     input:
         model = 'ixnosmodels/{sample}/{sample}.bestmodel.pt',
         fafile = lambda wc: fafiles[wc.sample]
-    output: touch('ixnos_elong/{sample}/{sample}'),'ixnos_elong/{sample}/{sample}.elong.tsv'
+    output: touch('ixnos_elong/{sample}/{sample}'),'ixnos_elong/{sample}/{sample}.elong.csv'
     shell: r'''
-	python ../src/IxnosTorch/ixnos_elong.py -m {input.model} -f {input.fafile} -o {output}
+	python /fast/AG_Ohler/dharnet/Ribotransformer/src/IxnosTorch/ixnos_elong.py -m {input.model} -f {input.fafile} -o {output[0]}
 	'''

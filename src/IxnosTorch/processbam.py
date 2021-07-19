@@ -39,16 +39,25 @@ class Cdsannotation:
         self.cdsdims: pd.DataFrame = pd.DataFrame(
             pd.concat(
                 [
-                    pd.Series(cdsanno.transcript_cdsstart),
-                    pd.Series(cdsanno.transcript_cdsend) + 1,
-                    cdsanno.trlength],
+                    pd.Series(self.transcript_cdsstart),
+                    pd.Series(self.transcript_cdsend) + 1,
+                    self.trlength],
                 axis=1)
         )
         self.cdsdims.columns = ['aug', 'stop', 'length']
+        self.cdsdims = self.cdsdims.reset_index().rename(
+            {'index': 'tr_id'}, axis=1)
+        self.cdsdims['n_cod'] = (self.cdsdims.stop - self.cdsdims.aug) / 3
+
+        tr3bp = (self.cdsdims.n_cod % 1) == 0
+        most_trs_3nt_mult = tr3bp.mean() > 0.8
+        assert most_trs_3nt_mult
 
         f_ref.close()
 
-    def get_coddf(self, trstouse=None, lenfilt=0):
+    def get_coddf(self, trstouse=None, lenfilt=0, lflank=1e12, rflank=1e12):
+        "get a data frame with the tr position, cds index (start is 0) "
+        "codon seq tr end position, and tr id of each codon"
         if trstouse is None:
             trlens = self.trlength
             trlens = trlens[(trlens // 3) > lenfilt]
@@ -59,11 +68,22 @@ class Cdsannotation:
         for tr in trstouse:
             start = self.transcript_cdsstart[tr]
             end = self.transcript_cdsend[tr]
-            futrcodpos = range(start - 3, -1, -3)
+            llimit = int(np.clip(
+                start - ((lflank + 1) * 3),
+                a_min=-1, a_max=1e12
+            ))
+            futrcodpos = range(start - 3, llimit, -3)
             futrcodpos = list(reversed(futrcodpos))
+            futrcodpos
+            # get cds codons
             cdscodpos = list(
                 range(start, end, 3))
-            tputrcodpos = list(range(end + 1, self.trlength[tr] - 2, 3))
+            # now get codons past the stop
+            rlimit = int(np.clip(
+                end + (rflank * 3),
+                a_min=-1, a_max=self.trlength[tr] - 2))
+            tputrcodpos = list(range(end + 1, rlimit, 3))
+            # combine
             codstarts = futrcodpos + cdscodpos + tputrcodpos
             codidx = list(reversed(range(-1, -len(futrcodpos) - 1, -1)))
             codidx += list(range(0, len(cdscodpos)))
@@ -77,7 +97,6 @@ class Cdsannotation:
             coddf['end'] = coddf['start'] + 3
             coddf['tr_id'] = tr
             coddfs.append(coddf)
-
         # %prun -l 10 tcode()
         coddf = pd.concat(coddfs, axis=0)
         #
@@ -99,8 +118,8 @@ def make_bamDF(
     readdf = []
     for read in inBam.fetch():
         i += 1
-        # if(i == 50000):
-        # break
+        # if(i == 500000):
+            # break
         cigars = set([c[0] for c in read.cigartuples])
         if read.mapping_quality > mapq and \
                 minRL <= read.query_length <= maxRL and \
@@ -189,7 +208,6 @@ def makePredTraining(bamdf):
 
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-i",
@@ -205,7 +223,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "-l",
         help="File of read length, optionally phase, offset",
-        default="../../cortexomics/ext_data/offsets_manual.tsv"
+        default=None
     )
     parser.add_argument("-v", default=False, help="verbose EM ?",
                         dest='verbose', action='store_true')
@@ -366,7 +384,7 @@ if __name__ == '__main__':
 
         return bestoffsetvotes, bestoffsetsum
 
-    if args.l is not None:
+    if args.l is None:
         bestoffsetvotes, bestoffsetsum = get_cdsocc_offsets(bamdf)
     else:
         bestoffsetvotes = pd.read_csv(args.l, sep='\t')
@@ -429,15 +447,6 @@ if __name__ == '__main__':
     tpmdf.to_csv(f'{args.o}.ribotpm.csv', index=False)
 
     print(f'{args.o}.ribotpm.csv')
-    cdsdims: pd.DataFrame = pd.DataFrame(
-        pd.concat(
-            [
-                pd.Series(cdsanno.transcript_cdsstart),
-                pd.Series(cdsanno.transcript_cdsend) + 1,
-                cdsanno.trlength],
-            axis=1)
-    )
-    cdsdims.columns = ['aug', 'stop', 'length']
 
     tr = sumpsites.tr_id[0]
     NTOKS = 512
@@ -486,14 +495,13 @@ if __name__ == '__main__':
 
         return sp2
 
-    sumpsites = trim_middle(sumpsites, cdsdims, NFLANK)
+    sumpsites = trim_middle(sumpsites, cdsanno.cdsdims, NFLANK)
 
     sumpsites.to_csv(f'{args.o}.sumpsites.csv', index=False)
 
     print(f'{args.o}.sumpsites.csv')
 
-    cdsdims = cdsdims.reset_index().rename({'index': 'tr_id'}, axis=1)
-    cdsdims.to_csv(args.o + '.cdsdims.csv', index=False)
+    cdsanno.cdsdims.to_csv(args.o + '.cdsdims.csv', index=False)
     print(f'{args.o}.cdsdims.csv')
 
 # # this gets us atg and sotp codon

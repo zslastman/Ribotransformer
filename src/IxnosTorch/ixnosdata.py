@@ -10,13 +10,13 @@ sparse = torch.sparse_coo_tensor
 fl = torch.sparse.FloatTensor  # type: ignore[attr-defined]
 ten = torch.tensor
 nts = 'ACGT'
-cods = [a + b + c for a in nts for b in nts for c in nts]
+
 
 foo = torch.cat
 
-
 class Ixnosdata:
     nts = 'ACGT'
+    cods = [a + b + c for a in nts for b in nts for c in 'ACGT']
     codinds = list(range(len(cods)))
     cod2id = pd.Series(dict(zip(cods, codinds)))
 
@@ -71,10 +71,12 @@ class Ixnosdata:
         seqvals = torch.cat([codmat.T, nuctensor])
         seqvals = seqvals.T
         #
-        yvals = tr_coddf[5:-4].ribosome_count.values
-        yvals = ten(yvals, dtype=torch.float64)
-        yvals = yvals / yvals.mean()
-        sys.stdout.write('.')
+        if 'ribosome_count' in tr_coddf.columns:
+            yvals = tr_coddf[5:-4].ribosome_count.values
+            yvals = ten(yvals, dtype=torch.float64)
+            yvals = yvals / yvals.mean()
+        else:
+            yvals = None
         return(seqvals, yvals)
 
     def __init__(self,
@@ -84,7 +86,8 @@ class Ixnosdata:
                  countmeanthresh: int = None,
                  top_n_thresh: int = 500,
                  get_energy: bool = False,
-                 countfilt: bool = True):
+                 tr_frac=0.75):
+        countdata = 'ribosome_count' in df.columns
         cdsdims['n_cod'] = (cdsdims['stop'] - cdsdims['aug']) / 3
         cdsdims = cdsdims.loc[(cdsdims['n_cod'] % 1 == 0)]
         cdsdims = cdsdims.loc[cdsdims['n_cod'] > (fptrim + tptrim)]
@@ -93,8 +96,8 @@ class Ixnosdata:
             query('codon_idx>=(@fptrim-@fwidth)').
             query('codon_idx <= (n_cod-(@tptrim-@fwidth+1))')
         )
-        trcounts = self.df.groupby('tr_id')['ribosome_count'].mean()
-        if countfilt:
+        if countdata:
+            trcounts = self.df.groupby('tr_id')['ribosome_count'].mean()
             if top_n_thresh is not None:
                 trcounts = trcounts[trcounts != 0]
                 alltrs = (trcounts.sort_values(ascending=False).
@@ -103,20 +106,24 @@ class Ixnosdata:
                 alltrs = trcounts[trcounts > countmeanthresh].index
         else:
             alltrs = self.df.tr_id.unique()
-        traintrs = np.random.choice(alltrs, int(len(alltrs) * 0.75))
-        testrs = np.array(list(set(alltrs) - set(traintrs)))
+        self.traintrs = np.random.choice(alltrs, int(len(alltrs) * tr_frac), replace = False)
+        self.testtrs = np.array(list(set(alltrs) - set(self.traintrs)))
         #
-        self.my_data_tr = [self.get_seq_X(tr) for tr in traintrs]
-        self.my_data_te = [self.get_seq_X(tr) for tr in testrs]
         #
+        self.my_data_tr = [self.get_seq_X(tr) for tr in self.traintrs]
         self.X_tr: torch.Tensor = torch.cat([x[0] for x in self.my_data_tr])
-        self.y_tr: torch.Tensor = torch.cat([x[1] for x in self.my_data_tr])
-        self.X_te: torch.Tensor = torch.cat([x[0] for x in self.my_data_te])
-        self.y_te: torch.Tensor = torch.cat([x[1] for x in self.my_data_te])
-        assert self.X_tr.shape[0] == self.y_tr.shape[0]
-        assert self.X_te.shape[0] == self.y_te.shape[0]
         self.bounds_tr = [x[0].shape[0] for x in self.my_data_tr]
-        self.bounds_te = [x[0].shape[0] for x in self.my_data_te]
+        #
+        if tr_frac < 1:
+            self.my_data_te = [self.get_seq_X(tr) for tr in self.testtrs]
+            self.X_te: torch.Tensor = torch.cat([x[0] for x in self.my_data_te])
+            self.bounds_te = [x[0].shape[0] for x in self.my_data_te]
+        if countdata:
+            self.y_tr: torch.Tensor = torch.cat([x[1] for x in self.my_data_tr])
+            assert self.X_tr.shape[0] == self.y_tr.shape[0]
+            if tr_frac < 1:
+                self.y_te: torch.Tensor = torch.cat([x[1] for x in self.my_data_te])
+                assert self.X_te.shape[0] == self.y_te.shape[0]
         self.fwidth: int = fwidth
         del self.df
 
@@ -124,7 +131,7 @@ class Ixnosdata:
             ENERGYCILP = 20
             #
             with Pool(4) as p:
-                struct_tr = p.map(self.get_energyvals, traintrs)
+                struct_tr = p.map(self.get_energyvals, self.traintrs)
                 # pickle.dump(struct_t. r, open(f'struct_tr.pkl', 'wb'))
                 structmat_tr = torch.cat([ten(x[2][:-3]) for x in struct_tr])
                 structmat_tr = structmat_tr.reshape([3, -1])
@@ -135,7 +142,7 @@ class Ixnosdata:
 
             #
             with Pool(4) as p:
-                struct_te = p.map(self.get_energyvals, testrs)
+                struct_te = p.map(self.get_energyvals, self.testtrs)
                 # pickle.dump(struct_te, open(f'struct_te.pkl', 'wb'))
                 # type: ignore[call-arg]
                 structmat_te = torch.cat([ten(x[2][:-3]) for x in struct_te])
@@ -166,7 +173,6 @@ class Ixnosdata:
         # flat_Xevails = X_tr[:,-3:].reshape([-1])
         # txtplot(np.array(e_vals),flat_Xevails[:167*3])
         # stats.pearsonr(np.array(e_vals),flat_Xevails[:167*3])
-        sys.stdout.write('.')
         return([all_e_seq, n_bps, e_vals])
 
 
