@@ -4,10 +4,11 @@
 ################################################################################
 print_batch_loss = False
 NULLVAL=-4
-epochs = 10
+epochs = 3
+lclip = 20
+rclip = -20
 # datatouse = ['codons','seqfeats']
-datatouse = ['codons']
-
+datatouse = ['codons','ixnos']
 
 if not 'rdata' in globals().keys():
     import os
@@ -58,13 +59,13 @@ if True:
     # data2norm=test_data
     def clip_norm_ribosig(data2norm):
         clipsig = data2norm.ribosignal.numpy().copy()
-        cliptensor = data2norm.orfclip(data2norm.data['codons'],0,0)
+        cliptensor = data2norm.orfclip(data2norm.data['codons'],lclip,rclip)
         # clipsig[~cliptensor]=0
         gnum = clipsig.shape[0]
         orfmeans = np.array([clipsig[i][cliptensor[i]].mean() for i in range(gnum)])
         orfstds = np.array([clipsig[i][cliptensor[i]].std() for i in range(gnum)])
         clipsig -= orfmeans.reshape([-1,1])
-        clipsig /= orfstds.reshape([-1,1])
+        # clipsig /= orfstds.reshape([-1,1])
         clipsig[~cliptensor]= NULLVAL
         data2norm.ribosignal = torch.Tensor(clipsig)
         # data2norm.offset = None
@@ -144,11 +145,11 @@ if True:
 
     # batch[0][0].shape
     # batch[0][0].permute([2,0,1])
-    
     #ninp is the embedding dimension
     #ninp,nhead,nhid,dropout = 65,10,10,0.5
+
     class TransformerModel(nn.Module):
-        def __init__(self, ninp, nhead, nhid, nlayers, dropout=0.5):
+        def __init__(self, ninp, nhead, nhid, nlayers, dropout=0.1):
             super(TransformerModel, self).__init__()
             from torch.nn import TransformerEncoder, TransformerEncoderLayer
             self.pos_encoder = PositionalEncoding(ninp, dropout=0)
@@ -163,6 +164,9 @@ if True:
         # src,self=tdata,cmodel
         def forward(self, src):
             src,offset = src
+            ixind = src.shape[1]
+            ixnos = src[:,(ixind-1):ixind,:]
+            src = src[:,0:(ixind-1),:]
             isnull=src[:,0,:]==1
             # output = self.decoder(src.permute([2,0,1]))
             # src[:,1:,:]=0
@@ -179,11 +183,12 @@ if True:
             # assert list(output.shape) == (512,n_batch,1) 
             output = output.squeeze(2).permute([1,0])
             output[isnull] = NULLVAL
+            # output = output + ixnos.squeeze(1)
             return output
     #
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     datadim = train_data.datadim()
-    cmodel = TransformerModel(datadim, 5,10,4).to(device)
+    cmodel = TransformerModel(datadim-1, nhead=5,nhid=10,nlayers=4).to(device)
     tdata,ttarget=next(iter(train_data))
     toutput = cmodel(tdata)
 
@@ -229,8 +234,8 @@ batch=0
 # batchdata[0]
 def get_rdata_cor(target, output, data, train_data):
     datacor = round(scipy.stats.pearsonr(
-                target[train_data.orfclip(data[0],0,0)],
-                output[train_data.orfclip(data[0],0,0)].detach()
+                target[train_data.orfclip(data[0],lclip,rclip)],
+                output[train_data.orfclip(data[0],lclip,rclip)].detach()
     )[0],3)
     return datacor
 
@@ -240,8 +245,8 @@ def get_val_cor(val_data,cmodel):
     val_data.batchshuffle=False
     cmodel.eval()
     with torch.no_grad():
-        preds = [cmodel(b[0]).detach()[val_data.orfclip(b[0][0],0,0)] for b in val_data]
-        targets = [b[1][val_data.orfclip(b[0][0],0,0)] for b in val_data]
+        preds = [cmodel(b[0]).detach()[val_data.orfclip(b[0][0],lclip,rclip)] for b in val_data]
+        targets = [b[1][val_data.orfclip(b[0][0],lclip,rclip)] for b in val_data]
     datacor = round(scipy.stats.pearsonr(
                 torch.cat(preds),
                 torch.cat(targets)
@@ -262,7 +267,6 @@ def train():
         data,target = batchdata
         optimizer.zero_grad()
         output = cmodel(data)
-
         cliptens = train_data.orfclip(data[0])
         loss = regcriterion(output, target, cliptens)
         # ipdb.set_trace()
@@ -327,7 +331,7 @@ def save_losses(train_losses,val_losses):
     epoch = [e for sub in epoch for e in sub]
     cor_loss_df['epoch'] = epoch
     cor_loss_df.columns = ['training','validation','epoch']
-    cor_loss_df.to_csv('norm_trans_losses.tsv',sep='\t',index=False)
+    cor_loss_df.to_csv('ix_tr_norm_trans_losses.tsv',sep='\t',index=False)
 
 def train_model():
     val_losses=[]
@@ -343,10 +347,10 @@ def train_model():
         # print('| start of epoch {:3d} | time: {:5.2f}s | valid loss {:5.4f} | '
         #       'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
         #                                  val_loss, val_loss))
+        print(f'epoch {epoch}/{epochs}')
         tr,val = train()
         val_losses.append(val)
         train_losses.append(tr)
-        print(f'epoch {1+epoch}/{epochs}')
         # print('-' * 89)
 
         # print(np.array(val_losses))
@@ -364,12 +368,13 @@ train_model()
 import itertools as it
 rdata.usedata=train_data.usedata
 def get_elongs(rdata, cmodel):
+    rdata.usedata=datatouse
     rdata.batchshuffle=False
+    next(iter(rdata))[0][0].shape
     cmodel.eval()
     with torch.no_grad():
         preds = [cmodel(b[0]).detach() for 
             b in rdata]
-    rdata.gene2num
     preds = torch.cat(preds,axis=0)
     orfclipten = [val_data.orfclip(b[0][0],0,0) for b in rdata]
     orfclipten = torch.cat(orfclipten,axis=0)
@@ -378,45 +383,51 @@ def get_elongs(rdata, cmodel):
     txtdensity(np.array(orfmeans))
     cmodel.train()
     txtplot(preds[1])
+
     nms = list(rdata.gene2num.index)
+    nms[1]
     rdata.batchshuffle=True
     return preds,orfmeans,nms
 
-preds = get_elongs(rdata, cmodel)
-torch.save(preds,args.o+'_predict.pt')
+predslist = get_elongs(rdata, cmodel)
 
-fooo
+torch.save(predslist,args.o + '_ixnos_predict.pt')
+
+elongdf = pd.DataFrame([pd.Series(predslist[1]),pd.Series(predslist[2])]).transpose()
+elongdf.columns=['elong','tr_id']
+elongdf.to_csv('trans_ix_elongs.csv')
 
 ################################################################################
 ########Test if it learns codon strengths the way I think it should
 ################################################################################
     
-n_cods=65
-fakecoddata=torch.diag(torch.FloatTensor([1]*n_cods)).reshape([1,n_cods,n_cods])
-otherdata = torch.zeros([1,tdata[0].shape[1]-n_cods,n_cods])
-fakedata = torch.cat([fakecoddata,otherdata],axis=1)
+if False:
+    n_cods=65
+    fakecoddata=torch.diag(torch.FloatTensor([1]*n_cods)).reshape([1,n_cods,n_cods])
+    otherdata = torch.zeros([1,tdata[0].shape[1]-n_cods,n_cods])
+    fakedata = torch.cat([fakecoddata,otherdata],axis=1)
 
 
 
 
-# #okay so the fake data works, same as reading weights
-#
-if regcriterion is mseregcriterion:
-    testoutput = cmodel((fakedata,tdata[1][0]))
-    print('mse loss')
-    txtplot(codstrengths,testoutput[:,1:])
-else:
-    print('poisson loss')
-    testoutput = cmodel((fakedata,tdata[1][0]))
-    txtplot(codstrengths,testoutput[:,1:].exp())
+    # #okay so the fake data works, same as reading weights
+    #
+    if regcriterion is mseregcriterion:
+        testoutput = cmodel((fakedata,tdata[1][0]))
+        print('mse loss')
+        txtplot(codstrengths,testoutput[:,1:])
+    else:
+        print('poisson loss')
+        testoutput = cmodel((fakedata,tdata[1][0]))
+        txtplot(codstrengths,testoutput[:,1:].exp())
 
-tdata[0].shape
-tdata,ttarget=next(iter(test_data))
-toutput = cmodel(tdata)
+    tdata[0].shape
+    tdata,ttarget=next(iter(test_data))
+    toutput = cmodel(tdata)
 
 
-txtplot(toutput[0])
-txtplot(toutput.sum(axis=0))
-txtplot(toutput.sum(axis=0)[0:10])
+    txtplot(toutput[0])
+    txtplot(toutput.sum(axis=0))
+    txtplot(toutput.sum(axis=0)[0:10])
 
-losvallist.append(val_losses)
+    losvallist.append(val_losses)

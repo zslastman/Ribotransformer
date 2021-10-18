@@ -1,17 +1,15 @@
+potential goals
+Convert your ixnos data object to a ribotransformer object
+
 objectives:
 
+
 1) Get a piece of code up, on github, that does something useful.
-
-
 
 #A site alignment via codon variance alignment.
 #The coding fasta would be one step.
 
-
-
 #stuck on the autoencoder thing rn.
-
-
 
 Okay so dts calculated from my data look reasonably like weinbergs, including
 the 3 slowest codons.
@@ -20,3 +18,21 @@ I think it's just learning a uniform distribution... So does it still do this wi
 Okay 
 
 eventually  I need to get it to learn a shape....
+
+
+#pre lab meeting
+okay so linear one overtaino a batch
+okay so it can overtrain on a single gene
+
+#transformer simply doesn't learn
+
+#without positional encoder, it can overfit on a single batch
+#positional encoder has the dims messed up
+
+
+
+# okay so shuffling reveals the transformer
+# learns _some_codon dependent stuff, just not that much of it
+
+#Can we stack ixnos and the transformer?
+#also realized that we have got 5 bp of noncoding base pairs for each one

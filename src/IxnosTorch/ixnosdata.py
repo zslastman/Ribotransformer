@@ -96,6 +96,9 @@ class Ixnosdata:
             query('codon_idx>=(@fptrim-@fwidth)').
             query('codon_idx <= (n_cod-(@tptrim-@fwidth+1))')
         )
+        # self.df.tr_id.value_counts()
+        # df.tr_id.value_counts()
+
         if countdata:
             trcounts = self.df.groupby('tr_id')['ribosome_count'].mean()
             if top_n_thresh is not None:
@@ -201,3 +204,12 @@ if __name__ == '__main__':
 
     # create dataset
     ixdataset = Ixnosdata(df, cdsdims)
+
+
+# def cdsdimmatch(selcdsdims,selpcov,stp=5):
+#     n_cod_df = selpcov.query('codon_idx>=0').tr_id.value_counts()
+#     n_cod_df = n_cod_df-stp
+#     n_cod_df=n_cod_df.reset_index()
+#     n_cod_df.columns=['tr_id','n_cod_df']
+#     selcdsdims.merge(n_cod_df)
+# assert cdsdimmatch(selcdsdims,selpcov)

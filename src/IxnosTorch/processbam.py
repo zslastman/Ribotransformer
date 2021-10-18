@@ -457,6 +457,7 @@ if __name__ == '__main__':
 
     def trim_middle(sumpsites, cdsdims, NFLANK):
         psitetrs = sumpsites.tr_id.unique()
+        assert psitetrs[0] in cdsdims.index
         trcodons = ((cdsdims.stop - cdsdims.aug) / 3)[psitetrs]
         # include flanks in this number
         trcodons = trcodons + (2 * NFLANK)
@@ -492,7 +493,6 @@ if __name__ == '__main__':
         # everything has big enough UTRs to include the flanks
         # assert (sp2.groupby('tr_id').size()[
         # trcodons.index] == trcodons.clip(upper=NTOKS)).all()
-
         return sp2
 
     sumpsites = trim_middle(sumpsites, cdsanno.cdsdims, NFLANK)

@@ -2,7 +2,7 @@ import torch
 import ipdb  # ignore
 import sys
 import argparse
-from ixnosdata import Ixnosdata
+# from ixnosdata import Ixnosdata
 from pathlib import Path
 from typing import List
 from scipy import stats
@@ -13,7 +13,6 @@ from torch.utils.data import Dataset
 from dataclasses import dataclass, field
 import collections
 
-ipdb
 
 class Net(nn.Module):
 

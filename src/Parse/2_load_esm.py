@@ -9,7 +9,6 @@ esmweightfolder = '/fast/scratch/users/dharnet_m/tmp/yeast_tokens/'
 
 ugenes=rdata.gene2num.index
 
-
 esmdatafile = 'data/'+esmweightfolder.split('/')[-2]+'.pt'
 
 n_lencds = n_toks - (n_flank*2)
@@ -19,12 +18,12 @@ if Path(esmdatafile).exists():
 	esmtrs2get = esm_esmtrs2get 
 	assert (esm_esmtrs2get,esmn_flank,esmn_lencds) == (esmtrs2get,n_flank,n_lencds)
 else:
-	esmtrs2get = [g for g in ugenes if g in esmtrs]
 	esmfiles = glob.glob(esmweightfolder+'/*')
 	issplitheader = PurePath(esmfiles[0]).name.count('|')>3
 	esmtrs =np.array([PurePath(f).name.split('|')[0].split('.')[0] for f in esmfiles])
 	esmfiles = pd.Series(esmfiles,index=esmtrs)
-
+	esmtrs2get = [g for g in ugenes if g in esmtrs]
+	#
 	esmfile = esmfiles[esmtrs2get[1]]
 	n_len=512
 	_,n_toks = torch.load(esmfiles[0])['representations'][34].shape
