@@ -70,7 +70,7 @@ if __name__ == '__main__':
         coddf = cdsob.get_coddf(chunktrs,rflank=1,lflank=1)
         # convert into an ixnos object (1 hot encoded matrix)
         ixdata = Ixnosdata(coddf, cdsdims,  tr_frac=1,
-                           fptrim=5, tptrim=5)
+                           fptrim=5, tptrim=5, top_n_thresh = 1e5)
         # get the cumulative bounds of these from the sizes
         cbounds = np.cumsum([0]+ixdata.bounds_tr)
 
