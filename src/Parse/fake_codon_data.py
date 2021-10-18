@@ -105,15 +105,3 @@ plx.show()
 fakesignal.sum(axis=1).max()
 fakesignal.sum(axis=1).min()
 
-# traininds.shape
-# testinds.shape
-# valinds.shape
-# train_data.shape
-# train_target.shape
-# val_data.shape
-# val_target.shape
-# test_data.shape
-# test_target.shape
-# train_offsets.shape
-# val_offsets.shape
-# test_offsets.shape
