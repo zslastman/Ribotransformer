@@ -1,16 +1,5 @@
 #!/usr/bin/env python
 
-## ----------------------------------------
-## scikit-ribo 
-## ----------------------------------------
-## a module for processing bam files
-## ----------------------------------------
-## author: Han Fang 
-## contact: hanfang.cshl@gmail.com
-## website: hanfang.github.io
-## date: 10/28/2016
-## ----------------------------------------
-
 from __future__ import print_function, division
 import os
 import sys
