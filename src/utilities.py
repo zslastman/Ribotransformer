@@ -7,6 +7,7 @@ from rpy2.robjects import pandas2ri
 from rpy2.robjects.conversion import localconverter
 import torch
 import pandas as pd
+import numpy as np
 ten = torch.Tensor
 # numpy2ri.deactivate()
 

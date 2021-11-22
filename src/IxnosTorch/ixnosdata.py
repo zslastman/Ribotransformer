@@ -74,10 +74,11 @@ class Ixnosdata:
         if 'ribosome_count' in tr_coddf.columns:
             yvals = tr_coddf[5:-4].ribosome_count.values
             yvals = ten(yvals, dtype=torch.float64)
+            yvalsnonorm = yvals
             yvals = yvals / yvals.mean()
         else:
             yvals = None
-        return(seqvals, yvals)
+        return(seqvals, yvals, yvalsnonorm)
 
     def __init__(self,
                  df: pd.DataFrame,
@@ -94,7 +95,7 @@ class Ixnosdata:
         self.df: pd.DataFrame = (
             df.merge(cdsdims).
             query('codon_idx>=(@fptrim-@fwidth)').
-            query('codon_idx <= (n_cod-(@tptrim-@fwidth+1))')
+            query('codon_idx <= (n_cod-(@tptrim-@fwidth+1))-1')
         )
         # self.df.tr_id.value_counts()
         # df.tr_id.value_counts()
@@ -116,6 +117,7 @@ class Ixnosdata:
         self.my_data_tr = [self.get_seq_X(tr) for tr in self.traintrs]
         self.X_tr: torch.Tensor = torch.cat([x[0] for x in self.my_data_tr])
         self.bounds_tr = [x[0].shape[0] for x in self.my_data_tr]
+
         #
         if tr_frac < 1:
             self.my_data_te = [self.get_seq_X(tr) for tr in self.testtrs]
@@ -123,6 +125,9 @@ class Ixnosdata:
             self.bounds_te = [x[0].shape[0] for x in self.my_data_te]
         if countdata:
             self.y_tr: torch.Tensor = torch.cat([x[1] for x in self.my_data_tr])
+            hasnonorm = len(self.my_data_tr[0])==3
+            if(hasnonorm):
+                self.y_tr_nonorm: torch.Tensor = torch.cat([x[2] for x in self.my_data_tr])
             assert self.X_tr.shape[0] == self.y_tr.shape[0]
             if tr_frac < 1:
                 self.y_te: torch.Tensor = torch.cat([x[1] for x in self.my_data_te])
