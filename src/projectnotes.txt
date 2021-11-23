@@ -1,5 +1,0 @@
-#Todos
-1)  - totally fair comparison to ixnos - make sure we can get the same correlation
-	okay so I can get a correlation of 1 between ixnos training data non normed and the ribosig data - seems to be fair
-	yet cor remains puzzlingly low...
-2) Use that revisit e.g. convnet or lstm.

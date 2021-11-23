@@ -1,7 +1,0 @@
-arraychoose.c
-setup.py
-arraychoose.egg-info/PKG-INFO
-arraychoose.egg-info/SOURCES.txt
-arraychoose.egg-info/dependency_links.txt
-arraychoose.egg-info/not-zip-safe
-arraychoose.egg-info/top_level.txt
